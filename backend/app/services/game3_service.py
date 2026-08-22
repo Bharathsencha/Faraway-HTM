@@ -2,6 +2,7 @@ import json
 import os
 import random
 from app.agents.genai_wrapper import genai_available
+from groq import Groq
 
 TOPICS = {
   "EASY": [
@@ -274,13 +275,19 @@ def count_fillers(text):
     return sum(1 for w in words if w.strip(".,!?") in fillers)
 
 def transcribe_audio_file(audio_path):
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    audio_file = genai.upload_file(path=audio_path)
-    transcription_response = model.generate_content(
-        [audio_file, "Output ONLY the direct transcription of the speech. Do not add metadata or comments. Keep original filler words like 'um', 'uh', 'like' intact."]
-    )
-    transcript = transcription_response.text.strip()
-    genai.delete_file(audio_file.name)
+    client = Groq()
+    
+    with open(audio_path, "rb") as file:
+        transcription = client.audio.transcriptions.create(
+            file=(audio_path, file.read()),
+            model="whisper-large-v3-turbo",
+            temperature=0, 
+            language="en",
+            response_format="verbose_json",
+            prompt="Um, uh, like, so, actually, basically..."
+        )
+    
+    transcript = transcription.text.strip()
     return transcript
 
 def run_multi_agent_evaluation(question_id, text_answer=None, audio_path=None):
@@ -288,9 +295,6 @@ def run_multi_agent_evaluation(question_id, text_answer=None, audio_path=None):
     topic = concept["title"]
     level = concept["difficulty"]
     
-    # Configure model
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
     # 1. Transcribe audio if needed
     if audio_path:
         transcript = transcribe_audio_file(audio_path)
@@ -322,20 +326,23 @@ Return ONLY valid JSON, no extra text, no markdown:
   "weak_filler": "the filler word they used most"
 }}
 """
-    response = model.generate_content(prompt)
-    text = response.text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-            
-    parsed_json = json.loads(text.strip())
+    # --- GROQ REPLACEMENT STARTS HERE ---
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    completion = client.chat.completions.create(
+        model="openai/gpt-oss-20b", # Or use your "openai/gpt-oss-20b" model here
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        response_format={"type": "json_object"}, # Forces pure JSON output
+        stream=False
+    )
+    text = completion.choices[0].message.content.strip()
+    # --- GROQ REPLACEMENT ENDS HERE ---
+    
+    # Groq returns pure JSON when response_format is set, so we can parse directly
+    parsed_json = json.loads(text)
     total_score = parsed_json.get("total_score", 70)
     
-    # As requested: We don't deduct lives if they do well. We ONLY deduct if they bomb it.
     life_consumed = total_score < 30
-    
-    # Base XP scaling
     xp_awarded = int((total_score / 100) * 200) if total_score >= 50 else 10
 
     return {
@@ -347,8 +354,6 @@ Return ONLY valid JSON, no extra text, no markdown:
         "feedback": parsed_json.get("feedback", ""),
         "xpAwarded": xp_awarded,
         "lifeConsumed": life_consumed,
-        
-        # New Gemini scoring agent fields
         "content_score": parsed_json.get("content_score", 20),
         "fluency_score": parsed_json.get("fluency_score", 20),
         "structure_score": parsed_json.get("structure_score", 20),

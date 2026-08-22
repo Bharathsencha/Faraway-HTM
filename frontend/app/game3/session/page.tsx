@@ -366,18 +366,18 @@ export default function SessionPage() {
                     <div className="flex justify-between items-center border-b border-border pb-1">
                       <span className="text-[10px] uppercase font-black text-primary flex items-center gap-1.5">
                         <span className={`h-2 w-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : (isTranscribing ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground')}`} />
-                        Gemini Transcriber
+                        Whisper Transcriber
                       </span>
-                      <span className="text-[10px] text-muted-foreground uppercase font-bold">Powered by Gemini 2.5 Flash</span>
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold">Powered by Groq</span>
                     </div>
                     {isTranscribing ? (
                       <div className="flex items-center gap-2 py-1 text-muted-foreground text-sm italic">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
-                        Transcribing your speech using Gemini 2.5 Flash...
+                        Transcribing your speech using Whisper-v3-Turbo...
                       </div>
                     ) : (
                       <p className={`text-sm leading-relaxed ${liveTranscript ? 'text-foreground font-medium' : 'text-muted-foreground italic'}`}>
-                        {liveTranscript || "Speak, then click stop. Gemini will transcribe your answer here..."}
+                        {liveTranscript || "Speak, then click stop. Groq will transcribe your answer here..."}
                       </p>
                     )}
                   </div>

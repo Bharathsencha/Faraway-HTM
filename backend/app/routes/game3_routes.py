@@ -1,10 +1,27 @@
 from flask import Blueprint, request, jsonify
 import json
 import os
-from app.agents.genai_wrapper import genai_client, genai_available
+from groq import Groq
 from app.controllers import game3_controller
 
 game3_bp = Blueprint('game3_routes', __name__, url_prefix='/api/game3')
+
+def generate_groq_response(prompt, enforce_json=False):
+    # Initialize the client. Ensure GROQ_API_KEY is exported in your environment.
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    kwargs = {
+        "model": "openai/gpt-oss-20b",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "stream": False
+    }
+    
+    if enforce_json:
+        kwargs["response_format"] = {"type": "json_object"}
+        kwargs["temperature"] = 0 # Lower temperature ensures stricter JSON compliance
+
+    completion = client.chat.completions.create(**kwargs)
+    return completion.choices[0].message.content.strip()
 
 @game3_bp.route('/start', methods=['POST'])
 def start():
@@ -12,7 +29,6 @@ def start():
 
 @game3_bp.route('/evaluate', methods=['POST'])
 def evaluate():
-    # Frontend sends multipart/form-data for audio, JSON for text
     if request.content_type and 'multipart/form-data' in request.content_type:
         return game3_controller.evaluate_audio(request)
     else:
@@ -29,7 +45,6 @@ def next_card():
 @game3_bp.route('/score', methods=['POST'])
 def score_route():
     data = request.get_json() or {}
-    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 You are an expert technical interview coach.
@@ -53,22 +68,14 @@ Return ONLY valid JSON, no extra text, no markdown:
 }}
 """
     try:
-        if genai_available:
-            text = genai_client.generate_text(prompt)
-        else:
-            raise Exception('genai not available')
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return jsonify(json.loads(text.strip())), 200
+        text = generate_groq_response(prompt, enforce_json=True)
+        return jsonify(json.loads(text)), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @game3_bp.route('/generate-topic', methods=['POST'])
 def generate_topic_route():
     data = request.get_json() or {}
-    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 Generate 1 technical interview speaking topic.
@@ -88,18 +95,14 @@ HARD = advanced (system design, distributed systems, CAP theorem)
 GOD = expert (design at scale, fault tolerance, real-time systems)
 """
     try:
-        if genai_available:
-            txt = genai_client.generate_text(prompt)
-            return jsonify({"topic": txt.strip()}), 200
-        else:
-            raise Exception('genai not available')
+        txt = generate_groq_response(prompt, enforce_json=False)
+        return jsonify({"topic": txt}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @game3_bp.route('/coach', methods=['POST'])
 def coach_route():
     data = request.get_json() or {}
-    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 You are a technical interview speech coach.
@@ -114,18 +117,14 @@ Be specific and actionable.
 Do not repeat the question back.
 """
     try:
-        if genai_available:
-            txt = genai_client.generate_text(prompt)
-            return jsonify({"answer": txt.strip()}), 200
-        else:
-            raise Exception('genai not available')
+        txt = generate_groq_response(prompt, enforce_json=False)
+        return jsonify({"answer": txt}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @game3_bp.route('/update-profile', methods=['POST'])
 def update_profile_route():
     data = request.get_json() or {}
-    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 Analyze this person's speech pattern across sessions.
@@ -144,22 +143,14 @@ Return ONLY valid JSON:
 }}
 """
     try:
-        if genai_available:
-            text = genai_client.generate_text(prompt)
-        else:
-            raise Exception('genai not available')
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return jsonify(json.loads(text.strip())), 200
+        text = generate_groq_response(prompt, enforce_json=True)
+        return jsonify(json.loads(text)), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @game3_bp.route('/warmup', methods=['POST'])
 def warmup_route():
     data = request.get_json() or {}
-    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
 Create a 30 second speech warmup drill.
@@ -174,14 +165,7 @@ Return ONLY valid JSON:
 }}
 """
     try:
-        if genai_available:
-            text = genai_client.generate_text(prompt)
-        else:
-            raise Exception('genai not available')
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return jsonify(json.loads(text.strip())), 200
+        text = generate_groq_response(prompt, enforce_json=True)
+        return jsonify(json.loads(text)), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
