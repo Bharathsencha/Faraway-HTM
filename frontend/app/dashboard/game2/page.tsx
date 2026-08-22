@@ -414,31 +414,51 @@ export default function Game2Page() {
     if (!file) return
 
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (ext !== 'pdf' && ext !== 'docx' && ext !== 'txt' && ext !== 'md') {
-      setResumeUploadError('Use a resume file in .pdf, .docx, .txt, or .md format.')
+    if (ext !== 'pdf' && ext !== 'txt') {
+      setResumeUploadError('Please upload a .pdf or .txt file for AI parsing.')
       setResumeFileName('')
       setResumeText('')
       setPredictedSalary(0)
       return
     }
 
+    setResumeUploadError('Scanning resume with Groq AI...')
+    
     try {
-      const extractedText = (await file.text()).replace(/\s+/g, ' ').trim()
-      const resumeSeed = [extractedText, file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '), role, companyName]
-        .filter(Boolean)
-        .join(' ')
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('user_id', 'game2_player') 
 
-      setResumeUploadError('')
-      setResumeFileName(file.name)
-      setResumeText(resumeSeed)
-      setPredictedSalary(predictSalaryFromResume(resumeSeed, role))
-    } catch (error) {
-      console.error('Failed to read resume file:', error)
-      const fallbackText = `${file.name} ${role} ${companyName}`.trim()
-      setResumeUploadError('The file could not be fully read. The app is using the filename and role to estimate skills.')
-      setResumeFileName(file.name)
-      setResumeText(fallbackText)
-      setPredictedSalary(predictSalaryFromResume(fallbackText, role))
+      const res = await fetch('http://localhost:5000/api/interview/upload-resume', {
+        method: 'POST',
+        body: formData
+      })
+
+      // 1. Parse the JSON FIRST before checking if the response failed
+      const data = await res.json()
+      
+      // 2. Now, if it's a 400 error, throw the exact message Flask sent back
+      if (!res.ok) {
+        throw new Error(data.message || 'Backend rejected the resume')
+      }
+      
+      if (data.status === 'success' && data.profile) {
+        setResumeUploadError('')
+        setResumeFileName(file.name)
+        
+        const realAiText = `${data.profile.resume_summary} Skills: ${data.profile.skills.join(', ')}`
+        setResumeText(realAiText)
+        setPredictedSalary(predictSalaryFromResume(realAiText, role))
+      } else {
+        throw new Error(data.message || 'Parsing failed')
+      }
+      
+    } catch (error: any) {
+      console.error('Failed to process resume via backend API:', error)
+      // 3. Display the exact Flask error in the red text underneath the upload box
+      setResumeUploadError(`Error: ${error.message}`)
+      setResumeFileName('')
+      setResumeText('')
     }
   }
 

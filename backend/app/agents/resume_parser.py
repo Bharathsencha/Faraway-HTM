@@ -1,7 +1,7 @@
 """
 Agent 1: Resume Parser
 Extracts role, experience, skills, industry, companies, projects, and resume summary
-using Gemini AI with heuristic fallbacks.
+using Groq AI with heuristic fallbacks.
 """
 
 import os
@@ -9,9 +9,10 @@ import re
 import json
 import traceback
 from typing import Dict, List
+from groq import Groq
 
 class ResumeParser:
-    """Parses resume text and extracts structured information using Gemini AI and fallback heuristics"""
+    """Parses resume text and extracts structured information using Groq AI and fallback heuristics"""
 
     # Common job roles/titles for fallback matching
     ROLE_KEYWORDS = {
@@ -140,16 +141,13 @@ class ResumeParser:
     }
 
     @staticmethod
-    def _parse_with_gemini(text: str) -> Dict:
-        """Parse resume text using Google Gemini AI"""
-        import google.generativeai as genai
-        
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    def _parse_with_groq(text: str) -> Dict:
+        """Parse resume text using Groq AI"""
+        api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
-            raise ValueError("No Gemini API key available")
+            raise ValueError("No Groq API key available")
             
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        client = Groq(api_key=api_key)
 
         prompt = f"""
 You are an expert HR resume scanner and tech recruiter.
@@ -174,18 +172,15 @@ Return ONLY a JSON object with EXACTLY the following keys (no markdown wrapping,
   "resume_summary": "A 2-3 sentence overview summarizing candidate background, primary tech stack/domain, key projects, and strengths based on the resume."
 }}
 """
-        response = model.generate_content(prompt)
-        response_text = response.text.strip()
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+            stream=False
+        )
         
-        # Clean markdown codeblocks if present
-        if response_text.startswith("```"):
-            lines = response_text.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            response_text = "\n".join(lines).strip()
-            
+        response_text = completion.choices[0].message.content.strip()
         data = json.loads(response_text)
         
         # Ensure fallback defaults if any field is missing
@@ -299,18 +294,18 @@ Return ONLY a JSON object with EXACTLY the following keys (no markdown wrapping,
     def parse(resume_text: str) -> Dict:
         """
         Main method to parse resume text into structured profile
-        Attempts Gemini AI first, falls back to heuristic parsing if API fails.
+        Attempts Groq AI first, falls back to heuristic parsing if API fails.
         """
         if not resume_text or len(resume_text.strip()) < 10:
             return ResumeParser._parse_heuristic("")
 
         try:
-            profile = ResumeParser._parse_with_gemini(resume_text)
+            profile = ResumeParser._parse_with_groq(resume_text)
             # Make sure raw resume text is retained for question generation context
             profile["raw_text"] = resume_text[:5000]
             return profile
         except Exception as e:
-            print(f"[ResumeParser] Gemini parsing failed/skipped: {e}. Falling back to heuristics.")
+            print(f"[ResumeParser] Groq parsing failed/skipped: {e}. Falling back to heuristics.")
             profile = ResumeParser._parse_heuristic(resume_text)
             profile["raw_text"] = resume_text[:5000]
             return profile

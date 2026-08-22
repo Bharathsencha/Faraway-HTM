@@ -1,7 +1,7 @@
 import random
 import re
 import os
-from app.agents.genai_wrapper import genai_client, genai_available
+from groq import Groq
 
 # Teammate's Hardcoded Market Data
 MARKET_DATA = {
@@ -134,13 +134,23 @@ def calculate_move(data):
     
     Respond directly to the candidate in exactly 2 short sentences. Be realistic and stay in character. Do not use markdown.
     """
+    
     try:
-        if genai_available:
-            hr_response_text = genai_client.generate_text(prompt)
-        else:
-            raise Exception('genai not available')
-    except Exception:
-        hr_response_text = f"We have reviewed your {move_type}. Our revised position stands at {hr_counter_offer}."
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("No Groq API key available")
+            
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            stream=False
+        )
+        hr_response_text = completion.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Groq API Error: {e}")
+        hr_response_text = f"We have reviewed your {move_type}. Our revised position stands at {int(hr_counter_offer)}."
 
     return {
         "hrResponse": hr_response_text,
