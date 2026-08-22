@@ -1,92 +1,29 @@
 """
 Agent 2: Question Generator
-Generates situational/behavioral interview questions based on resume
+Generates situational, technical, and behavioral interview questions
+specifically derived from the candidate's uploaded resume profile.
 """
 
+import os
+import json
 import random
+import traceback
 from typing import Dict, List, Tuple
 
 class QuestionGenerator:
-    """Generates contextual interview questions based on candidate profile"""
-    
-    # Situational questions by role
-    ROLE_QUESTIONS = {
-        "PM": [
-            "You're launching a product feature and it flops on day 1. Walk me through your response.",
-            "Your engineering team says a feature will take 6 months, but your CEO wants it in 1 month. How do you handle it?",
-            "A major customer is threatening to leave due to a bug. Your team is overloaded. What do you do?",
-            "You discover that your main competitor launched a similar feature first. How do you respond?",
-            "You have conflicting feedback from users and stakeholders. How do you prioritize?",
-            "A team member publicly disagrees with your product direction in a meeting. How do you handle it?",
-            "Your product's metrics are declining. Walk me through how you'd investigate.",
-        ],
-        "SDE": [
-            "There's a production bug affecting 10% of users. You're the on-call engineer. Walk me through your approach.",
-            "Your code review is rejected for the third time. How do you respond?",
-            "You discover legacy code causing major performance issues. How do you prioritize fixing it?",
-            "A team member keeps pushing back on your architectural design. What do you do?",
-            "You're asked to estimate a complex feature. You're unsure about the timeline. What's your approach?",
-        ],
-        "Data Scientist": [
-            "Your model has 99% accuracy but stakeholders don't trust it. How do you build confidence?",
-            "You realize your training data has a significant bias. What's your next step?",
-            "A business critical prediction went wrong. How do you debug it?",
-            "You need to explain a complex model to non-technical stakeholders. How do you approach it?",
-        ],
-        "UX Designer": [
-            "Users hate your redesign. You've already invested weeks. What do you do?",
-            "You have competing design directions from leadership. How do you decide?",
-            "A feature you designed isn't being used. Walk me through your investigation.",
-            "Your accessibility audit reveals major issues. How do you prioritize fixes?",
-        ],
-    }
-    
-    # Behavioral questions - universal
-    BEHAVIORAL_QUESTIONS = [
-        "Tell me about a time you failed and what you learned.",
-        "Describe a time you had to learn something completely new quickly.",
-        "Give an example of when you had to compromise on your ideals.",
-        "Tell me about a conflict with a coworker and how you resolved it.",
-        "Describe your biggest professional achievement.",
-        "Tell me about a time you advocated for an unpopular idea.",
-        "When have you shown leadership despite not having a title?",
-    ]
-    
-    # Industry-specific questions
-    INDUSTRY_QUESTIONS = {
-        "Fintech": [
-            "How would you ensure security in a payment system you're designing?",
-            "A compliance audit flags a potential issue in your system. Walk through your response.",
-        ],
-        "Healthcare": [
-            "How would you handle a data breach affecting patient records?",
-            "You discover a bug in a medical feature. What's your immediate action?",
-        ],
-        "E-commerce": [
-            "During peak sales season, your checkout is down for 2 hours. What's your response?",
-            "Your recommendation algorithm is showing biased results. How do you fix it?",
-        ],
-        "SaaS": [
-            "A key customer's account has performance issues. Walk me through your troubleshooting.",
-            "You need to scale your system 10x. What's your approach?",
-        ],
-        "AI/ML": [
-            "Your model performance degrades in production. How do you investigate?",
-            "You're asked to deploy a model you're not confident about. What do you do?",
-        ],
-    }
-    
-    # Time limits by difficulty
+    """Generates contextual, resume-based interview questions for candidates"""
+
+    # Time limits by difficulty/experience level
     TIME_LIMITS = {
-        "easy": 30,      # 30 seconds
-        "medium": 45,    # 45 seconds
-        "hard": 60,      # 60 seconds
-        "very_hard": 90, # 90 seconds
+        "easy": 45,       # 45 seconds
+        "medium": 60,     # 60 seconds
+        "hard": 90,       # 90 seconds
+        "very_hard": 120, # 120 seconds
     }
-    
+
     @staticmethod
     def get_difficulty(years_experience: int) -> str:
-        """Determine difficulty based on experience"""
+        """Determine difficulty level based on years of experience"""
         if years_experience >= 10:
             return "very_hard"
         elif years_experience >= 5:
@@ -95,54 +32,142 @@ class QuestionGenerator:
             return "medium"
         else:
             return "easy"
-    
+
     @staticmethod
-    def generate_question(profile: Dict) -> Tuple[str, int, str]:
-        """
-        Generate a question based on candidate profile
-        
-        Args:
-            profile: Resume parser output with role, industry, etc.
-        
-        Returns:
-            (question, time_limit_seconds, question_type)
-        """
-        role = profile.get("role", "Professional")
-        industry = profile.get("industry", "General")
-        years = profile.get("years_experience", 0)
-        
+    def _generate_with_gemini(profile: Dict, previous_questions: List[str] = None) -> Tuple[str, int, str]:
+        """Generate a contextual interview question directly from the resume using Gemini AI"""
+        import google.generativeai as genai
+
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("No Gemini API key available")
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        role = profile.get("role", "Software Professional")
+        years = profile.get("years_experience", 2)
+        seniority = profile.get("seniority_level", "Mid-Level")
+        industry = profile.get("industry", "Tech")
+        skills = profile.get("skills", [])
+        companies = profile.get("companies", [])
+        projects = profile.get("projects", [])
+        summary = profile.get("resume_summary", "")
+        raw_text = profile.get("raw_text", "")
+
+        prev_q_str = ""
+        if previous_questions:
+            prev_q_str = "PREVIOUSLY ASKED QUESTIONS (DO NOT REPEAT OR DUPLICATE SIMILAR TOPICS):\n" + "\n".join(f"- {q}" for q in previous_questions)
+
+        prompt = f"""
+You are an expert technical interviewer at a top technology company.
+Your goal is to conduct a personalized interview based on the candidate's uploaded resume.
+
+CANDIDATE PROFILE FROM RESUME:
+- Primary Role: {role}
+- Seniority: {seniority} ({years} years experience)
+- Industry: {industry}
+- Key Skills: {', '.join(skills) if skills else 'Not specified'}
+- Past Companies: {', '.join(companies) if companies else 'Not specified'}
+- Key Projects: {'; '.join(projects) if projects else 'Not specified'}
+- Resume Summary: {summary}
+- Resume Snippet: {raw_text[:1500]}
+
+{prev_q_str}
+
+TASK:
+Generate EXACTLY 1 challenging, highly specific, and realistic interview question that DIRECTLY references details from the candidate's resume (their specific tools, past projects, company experience, or technical accomplishments).
+The question should test their real-world problem-solving abilities, system design, architectural choices, or leadership in their target role.
+
+Return ONLY a JSON object with EXACTLY the following structure (no markdown wrapping, no extra text):
+{{
+  "question": "In your resume, you mentioned leading X using Y at Z. If you faced...",
+  "question_type": "resume_based",
+  "recommended_time_seconds": 60,
+  "context_tag": "Specific focus area or skill being tested"
+}}
+"""
+        response = model.generate_content(prompt)
+        response_text = response.text.strip()
+
+        if response_text.startswith("```"):
+            lines = response_text.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            response_text = "\n".join(lines).strip()
+
+        data = json.loads(response_text)
+        question = data.get("question", "").strip()
+        q_type = data.get("question_type", "resume_based")
+        time_limit = int(data.get("recommended_time_seconds") or QuestionGenerator.TIME_LIMITS.get(QuestionGenerator.get_difficulty(years), 60))
+
+        if not question:
+            raise ValueError("Empty question generated by Gemini")
+
+        return question, time_limit, q_type
+
+    @staticmethod
+    def _generate_fallback(profile: Dict, previous_questions: List[str] = None) -> Tuple[str, int, str]:
+        """Fallback rule-based question generator using candidate's parsed resume metadata"""
+        role = profile.get("role", "Software Professional")
+        years = profile.get("years_experience", 2)
+        skills = profile.get("skills", ["software development", "problem solving"])
+        companies = profile.get("companies", [])
+        projects = profile.get("projects", [])
+        industry = profile.get("industry", "General Tech")
+
         difficulty = QuestionGenerator.get_difficulty(years)
         time_limit = QuestionGenerator.TIME_LIMITS[difficulty]
+
+        skill1 = skills[0] if len(skills) > 0 else "software engineering"
+        skill2 = skills[1] if len(skills) > 1 else "cloud infrastructure"
+        comp_name = companies[0] if companies else "your previous role"
+        project_desc = projects[0] if projects else f"a critical system using {skill1}"
+
+        templates = [
+            f"Based on your resume experience as a {role} working with {skill1} at {comp_name}, walk me through a time when a critical bug occurred in production. How did you diagnose and resolve it?",
+            f"You listed {skill1} and {skill2} as key competencies on your resume. How would you design a scalable architecture combining these technologies for a high-traffic {industry} platform?",
+            f"In your resume, you highlighted your background with {project_desc}. What were the biggest technical tradeoffs you had to make, and what would you do differently today?",
+            f"As a {role} with {years} years of experience in {industry}, how do you handle conflicting priorities between short-term feature delivery and long-term tech debt reduction?",
+            f"Reflecting on your work at {comp_name}, describe a situation where a technical project hit an unexpected bottleneck. What specific actions did you take to unblock the team?",
+        ]
+
+        # Filter out questions already used if possible
+        available = [t for t in templates if not previous_questions or t not in previous_questions]
+        question = random.choice(available) if available else random.choice(templates)
+
+        return question, time_limit, "resume_based"
+
+    @staticmethod
+    def generate_question(profile: Dict, previous_questions: List[str] = None) -> Tuple[str, int, str]:
+        """
+        Generate a contextual interview question based on candidate profile.
+        Attempts Gemini AI first; falls back to template generator if offline/error.
         
-        # 60% chance of role-specific, 20% behavioral, 20% industry-specific
-        rand = random.random()
-        
-        question = None
-        question_type = "behavioral"
-        
-        if rand < 0.6 and role in QuestionGenerator.ROLE_QUESTIONS:
-            question = random.choice(QuestionGenerator.ROLE_QUESTIONS[role])
-            question_type = "role_specific"
-        elif rand < 0.8:
-            question = random.choice(QuestionGenerator.BEHAVIORAL_QUESTIONS)
-            question_type = "behavioral"
-        elif industry in QuestionGenerator.INDUSTRY_QUESTIONS:
-            question = random.choice(QuestionGenerator.INDUSTRY_QUESTIONS[industry])
-            question_type = "industry_specific"
-        else:
-            question = random.choice(QuestionGenerator.BEHAVIORAL_QUESTIONS)
-            question_type = "behavioral"
-        
-        return question, time_limit, question_type
-    
+        Returns:
+            (question_text, time_limit_seconds, question_type)
+        """
+        if not profile:
+            profile = {}
+
+        try:
+            return QuestionGenerator._generate_with_gemini(profile, previous_questions)
+        except Exception as e:
+            print(f"[QuestionGenerator] Gemini generation failed/skipped: {e}. Falling back to templates.")
+            return QuestionGenerator._generate_fallback(profile, previous_questions)
+
     @staticmethod
     def generate_question_batch(profile: Dict, count: int = 5) -> List[Dict]:
-        """Generate multiple questions for a candidate"""
+        """Generate multiple distinct resume-based questions for a candidate session"""
         questions = []
+        previous = []
         for _ in range(count):
-            question, time_limit, q_type = QuestionGenerator.generate_question(profile)
+            q_text, time_limit, q_type = QuestionGenerator.generate_question(profile, previous_questions=previous)
+            previous.append(q_text)
             questions.append({
-                "question": question,
+                "question": q_text,
                 "time_limit": time_limit,
                 "type": q_type,
             })
