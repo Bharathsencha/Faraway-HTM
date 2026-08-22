@@ -20,10 +20,18 @@ export interface Option {
 export interface GooglyQuestion {
   id: string;
   type: QuestionType;
+  title?: string;
   category: string;
   difficulty: 'easy' | 'medium' | 'hard' | 'boss';
+  company?: string;
+  companies?: string[];
   questionText: string;
   options?: Option[];
+  correctOptionId?: string;
+  trapOptionId?: string;
+  trapExplanation?: string;
+  playerInsight?: string;
+  hint?: string;
 }
 
 export interface RevealResult {
