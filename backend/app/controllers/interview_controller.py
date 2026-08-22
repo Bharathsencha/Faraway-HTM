@@ -23,29 +23,32 @@ class InterviewController:
     def parse_resume():
         """
         POST /api/interview/parse-resume
-        Parse resume and extract candidate profile
+        Parse pasted resume text and extract candidate profile
         """
         try:
-            data = request.get_json()
+            data = request.get_json() or {}
             resume_text = data.get('resume_text', '')
             user_id = data.get('user_id', 'anonymous')
             
-            if not resume_text or len(resume_text.strip()) < 20:
+            if not resume_text or len(resume_text.strip()) < 10:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Resume text is too short (min 20 characters)'
+                    'message': 'Resume text is too short (min 10 characters)'
                 }), 400
             
-            # Parse resume
+            # Parse resume using AI / Heuristics
             profile = ResumeParser.parse(resume_text)
             
             return jsonify({
                 'status': 'success',
                 'profile': profile,
+                'resume_text': resume_text,
                 'user_id': user_id
             }), 200
         
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'status': 'error',
                 'message': str(e)
@@ -55,13 +58,13 @@ class InterviewController:
     def upload_resume():
         """
         POST /api/interview/upload-resume
-        Accept a PDF file upload, extract text, parse profile
+        Accept a PDF or TXT resume file upload, extract text, parse profile
         """
         try:
             if 'file' not in request.files:
                 return jsonify({
                     'status': 'error',
-                    'message': 'No file provided. Send a PDF file with key "file".'
+                    'message': 'No file provided. Send a file with key "file".'
                 }), 400
             
             file = request.files['file']
@@ -72,49 +75,56 @@ class InterviewController:
                     'message': 'Empty filename'
                 }), 400
             
-            # Check file extension
             filename = file.filename.lower()
-            if not filename.endswith('.pdf'):
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Only PDF files are supported. Please upload a .pdf file.'
-                }), 400
-            
             user_id = request.form.get('user_id', 'anonymous')
+            resume_text = ""
             
-            # Read the PDF and extract text
-            try:
-                from pypdf import PdfReader
-                
-                pdf_bytes = io.BytesIO(file.read())
-                reader = PdfReader(pdf_bytes)
-                
-                pages_text = []
-                for page in reader.pages:
-                    text = page.extract_text()
-                    if text:
-                        pages_text.append(text.strip())
-                
-                resume_text = '\n'.join(pages_text)
-                
-            except ImportError:
+            # PDF File parsing
+            if filename.endswith('.pdf'):
+                try:
+                    from pypdf import PdfReader
+                    pdf_bytes = io.BytesIO(file.read())
+                    reader = PdfReader(pdf_bytes)
+                    
+                    pages_text = []
+                    for page in reader.pages:
+                        text = page.extract_text()
+                        if text:
+                            pages_text.append(text.strip())
+                    
+                    resume_text = '\n'.join(pages_text)
+                except ImportError:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'PDF parsing library (pypdf) is not installed on the server.'
+                    }), 500
+                except Exception as pdf_err:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'Failed to read PDF: {str(pdf_err)}'
+                    }), 400
+            # Text File parsing (.txt)
+            elif filename.endswith('.txt'):
+                try:
+                    resume_text = file.read().decode('utf-8', errors='ignore')
+                except Exception as txt_err:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'Failed to read text file: {str(txt_err)}'
+                    }), 400
+            else:
                 return jsonify({
                     'status': 'error',
-                    'message': 'PDF parsing library (pypdf) is not installed on the server.'
-                }), 500
-            except Exception as pdf_err:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Failed to read PDF: {str(pdf_err)}'
+                    'message': 'Only .pdf and .txt files are supported.'
                 }), 400
             
-            if not resume_text or len(resume_text.strip()) < 20:
+            if not resume_text or len(resume_text.strip()) < 10:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Could not extract enough text from the PDF. The file may be image-based or empty.'
+                    'message': 'Could not extract enough text from the file. The file may be image-based or empty.'
                 }), 400
             
-            # Parse the extracted text
+            # Parse the extracted text with AI
             profile = ResumeParser.parse(resume_text)
             
             return jsonify({
@@ -122,7 +132,6 @@ class InterviewController:
                 'resume_text': resume_text,
                 'profile': profile,
                 'user_id': user_id,
-                'pages_count': len(pages_text) if 'pages_text' in dir() else 0,
             }), 200
         
         except Exception as e:
@@ -137,12 +146,13 @@ class InterviewController:
     def generate_question():
         """
         POST /api/interview/generate-question
-        Generate a question based on candidate profile
+        Generate a contextual question directly derived from candidate's uploaded resume profile
         """
         try:
-            data = request.get_json()
+            data = request.get_json() or {}
             profile = data.get('profile')
             user_id = data.get('user_id', 'anonymous')
+            previous_questions = data.get('previous_questions', [])
             
             if not profile:
                 return jsonify({
@@ -150,11 +160,15 @@ class InterviewController:
                     'message': 'Profile is required'
                 }), 400
             
-            # Generate question
-            question, time_limit, q_type = QuestionGenerator.generate_question(profile)
+            # Generate resume-tailored question
+            question, time_limit, q_type = QuestionGenerator.generate_question(
+                profile, 
+                previous_questions=previous_questions
+            )
             
             # Create session
             session = ProgressTracker.create_session(user_id, question, q_type)
+            session['profile'] = profile
             user_sessions[session['session_id']] = session
             
             return jsonify({
@@ -166,6 +180,8 @@ class InterviewController:
             }), 200
         
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return jsonify({
                 'status': 'error',
                 'message': str(e)
@@ -178,7 +194,7 @@ class InterviewController:
         Submit answer and get scoring/feedback
         """
         try:
-            data = request.get_json()
+            data = request.get_json() or {}
             session_id = data.get('session_id')
             answer_text = data.get('answer')
             duration_seconds = data.get('duration', 45)
@@ -190,7 +206,7 @@ class InterviewController:
                     'message': 'Invalid session_id'
                 }), 400
             
-            if not answer_text or len(answer_text.strip()) < 10:
+            if not answer_text or len(answer_text.strip()) < 5:
                 return jsonify({
                     'status': 'error',
                     'message': 'Answer is too short'
