@@ -1,7 +1,7 @@
 import json
 import os
 import random
-from app.agents.genai_wrapper import genai_available
+from groq import Groq
 
 # Full pool of MCQ and Open questions by difficulty
 QUESTION_POOL = [
@@ -231,13 +231,20 @@ def evaluate_with_agent(question_id, selected_option, open_answer, confidence_be
         """
 
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(response_mime_type="application/json")
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("No Groq API key available")
+            
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model="qwen/qwen3.6-27b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+            stream=False
         )
 
-        raw_text = response.text.strip()
+        raw_text = completion.choices[0].message.content.strip()
         if raw_text.startswith("```"):
             raw_text = raw_text.split("```")[1]
             if raw_text.startswith("json"):

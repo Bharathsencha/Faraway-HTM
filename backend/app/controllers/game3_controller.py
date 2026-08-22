@@ -79,7 +79,7 @@ def transcribe_audio(req):
         try:
             session_id = req.form.get("sessionId") or req.form.get("session_id")
             if session_id:
-                log_player_action(session_id, {"type": "transcribe", "payload": {"questionId": question_id}})
+                log_player_action(session_id, {"type": "transcribe", "payload": {}})
         except Exception:
             pass
         

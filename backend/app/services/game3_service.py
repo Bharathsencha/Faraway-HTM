@@ -275,19 +275,9 @@ def count_fillers(text):
     return sum(1 for w in words if w.strip(".,!?") in fillers)
 
 def transcribe_audio_file(audio_path):
-    client = Groq()
+    from app.services.speech_service import transcribe_audio_file as local_transcribe
     
-    with open(audio_path, "rb") as file:
-        transcription = client.audio.transcriptions.create(
-            file=(audio_path, file.read()),
-            model="whisper-large-v3-turbo",
-            temperature=0, 
-            language="en",
-            response_format="verbose_json",
-            prompt="Um, uh, like, so, actually, basically..."
-        )
-    
-    transcript = transcription.text.strip()
+    transcript = local_transcribe(audio_path)
     return transcript
 
 def run_multi_agent_evaluation(question_id, text_answer=None, audio_path=None):
@@ -329,7 +319,7 @@ Return ONLY valid JSON, no extra text, no markdown:
     # --- GROQ REPLACEMENT STARTS HERE ---
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     completion = client.chat.completions.create(
-        model="openai/gpt-oss-20b", # Or use your "openai/gpt-oss-20b" model here
+        model="qwen/qwen3.6-27b", # Or use your "llama3-70b-8192" model here
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
         response_format={"type": "json_object"}, # Forces pure JSON output

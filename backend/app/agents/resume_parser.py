@@ -173,7 +173,7 @@ Return ONLY a JSON object with EXACTLY the following keys (no markdown wrapping,
 }}
 """
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model="qwen/qwen3.6-27b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             response_format={"type": "json_object"},

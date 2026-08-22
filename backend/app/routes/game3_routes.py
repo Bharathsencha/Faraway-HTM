@@ -10,7 +10,7 @@ def generate_groq_response(prompt, enforce_json=False):
     # Initialize the client. Ensure GROQ_API_KEY is exported in your environment.
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
     kwargs = {
-        "model": "openai/gpt-oss-20b",
+        "model": "qwen/qwen3.6-27b",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7,
         "stream": False

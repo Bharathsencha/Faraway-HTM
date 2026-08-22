@@ -142,7 +142,7 @@ def calculate_move(data):
             
         client = Groq(api_key=api_key)
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model="qwen/qwen3.6-27b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             stream=False

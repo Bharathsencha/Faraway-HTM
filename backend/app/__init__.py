@@ -21,6 +21,7 @@ from app.routes.game3_routes import game3_bp
 from app.routes.game2_routes import game2_bp
 from app.routes.coach_routes import coach_bp
 from app.routes.interview_routes import interview_routes
+from app.routes.speech_routes import speech_bp
 
 
 def create_app() -> Flask:
@@ -53,6 +54,7 @@ def create_app() -> Flask:
     app.register_blueprint(game2_bp)
     app.register_blueprint(coach_bp)
     app.register_blueprint(interview_routes)
+    app.register_blueprint(speech_bp)
 
     @app.get("/api/health")
     def health_check():
