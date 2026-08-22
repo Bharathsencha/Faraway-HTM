@@ -1,0 +1,880 @@
+#!/usr/bin/env python3
+"""
+Scraper and curator for GeeksforGeeks Top 100 Interview Puzzles.
+Extracts puzzles, company tags, solutions, hints, and formats them into
+rich Googly Master MCQ questions with deceptive traps and AI insights.
+"""
+
+import json
+import os
+import re
+import urllib.request
+from bs4 import BeautifulSoup
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+INDEX_URL = "https://www.geeksforgeeks.org/aptitude/top-100-puzzles-asked-in-interviews/"
+
+CURATED_PUZZLE_METADATA = {
+    "puzzle-7-3-bulbs-and-3-switches": {
+        "category": "Lateral Thinking",
+        "difficulty": "medium",
+        "companies": ["Qualcomm", "MakeMyTrip", "Google"],
+        "questionText": "You are outside a closed room with 3 light bulbs inside and 3 switches outside. You can toggle the switches however you like, but you may enter the room only ONCE. How do you identify which switch connects to which bulb?",
+        "options": [
+            {"id": "a", "text": "Turn Switch 1 ON, Switch 2 ON, and leave Switch 3 OFF."},
+            {"id": "b", "text": "Turn Switch 1 ON, wait 10 mins, turn it OFF, turn Switch 2 ON, then enter and check heat and light."},
+            {"id": "c", "text": "Turn Switch 1 ON and Switch 2 OFF, enter and test Switch 3 from the door."},
+            {"id": "d", "text": "It is mathematically impossible in a single visit without a window or second person."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "d",
+        "trapExplanation": "Candidates assume light is the only observable state (binary: ON/OFF). By adding the thermal dimension (heat: warm bulb that was turned off), you get 3 distinct states in 1 visit!",
+        "playerInsight": "Think beyond visual inputs. Physics allows energy dissipation (heat) as an extra state variable.",
+        "hint": "Bulbs don't just emit light; incandescent bulbs also emit heat that persists for several minutes."
+    },
+    "puzzle-9-find-the-fastest-3-horses": {
+        "category": "Optimization & Logic",
+        "difficulty": "hard",
+        "companies": ["Goldman Sachs", "Oracle", "Accolite", "MakeMyTrip"],
+        "questionText": "You have 25 horses and a track that can race at most 5 horses at once without a timer. What is the minimum number of races needed to determine the top 3 fastest horses?",
+        "options": [
+            {"id": "a", "text": "6 races (5 group races + 1 final of all group winners)"},
+            {"id": "b", "text": "7 races (5 group races + 1 winners race + 1 runoff of 5 contenders)"},
+            {"id": "c", "text": "8 races (5 group races + 3 elimination stages)"},
+            {"id": "d", "text": "5 races (race 5 groups, top 3 in each group advance)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The classic trap is guessing 6 races: racing all 5 winners tells you #1 overall, but the 2nd and 3rd fastest horses in the entire pool could have been in the #1 winner's group!",
+        "playerInsight": "Always consider the worst-case distribution: the 2nd and 3rd fastest overall horses might have lost their initial heat to the #1 horse.",
+        "hint": "Race 6 determines the overall fastest horse, but only leaves 5 candidate horses for 2nd and 3rd place."
+    },
+    "puzzle-4-pay-an-employee-using-a-gold-rod-of-7-units": {
+        "category": "Binary Math",
+        "difficulty": "medium",
+        "companies": ["FAANG", "Ola Cabs", "Amazon"],
+        "questionText": "An employee works for 7 days. You have a 7-unit gold rod and must pay 1 unit at the end of each day. What is the minimum number of cuts to make in the rod?",
+        "options": [
+            {"id": "a", "text": "6 cuts (cut into seven 1-unit pieces)"},
+            {"id": "b", "text": "2 cuts (creating pieces of size 1, 2, and 4 units)"},
+            {"id": "c", "text": "3 cuts (creating pieces of size 1, 2, 2, and 2 units)"},
+            {"id": "d", "text": "1 cut (cut a 1-unit piece each day)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates forget that the employer can receive change! By making 2 cuts into lengths 1, 2, and 4, you can form every number from 1 to 7 via binary exchange.",
+        "playerInsight": "This is equivalent to representing integers 1 to 7 in base-2 (binary weights: 2^0, 2^1, 2^2).",
+        "hint": "Think binary numbers: how can 1, 2, and 4 combine to make 1, 2, 3, 4, 5, 6, and 7 with exchanges?"
+    },
+    "puzzle-6-monty-hall-problem": {
+        "category": "Probability & Game Theory",
+        "difficulty": "medium",
+        "companies": ["Google", "Microsoft", "VMWare"],
+        "questionText": "In a game show, there are 3 doors: 1 has a car, 2 have goats. You pick Door 1. The host (who knows what's behind every door) opens Door 3 revealing a goat, and offers you to switch to Door 2. Should you switch?",
+        "options": [
+            {"id": "a", "text": "It doesn't matter; each remaining door has a 50% chance."},
+            {"id": "b", "text": "Yes, switching doubles your chance of winning from 1/3 to 2/3."},
+            {"id": "c", "text": "No, sticking with your initial choice gives a 2/3 probability."},
+            {"id": "d", "text": "Switch only if the host offers cash incentives."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The infamous 50-50 intuition trap! When you initially chose Door 1, there was a 2/3 chance the car was behind Doors 2 or 3. The host's reveal filters out the goat, consolidating that 2/3 probability onto Door 2.",
+        "playerInsight": "The host's knowledge injects non-random information into the unchosen doors.",
+        "hint": "Your initial door only had a 1/3 chance. Where did the other 2/3 probability go after the host revealed a goat?"
+    },
+    "puzzle-13-100-prisoners-with-redblack-hats": {
+        "category": "Information Theory",
+        "difficulty": "hard",
+        "companies": ["Google", "Microsoft"],
+        "questionText": "100 prisoners in single file line each wear a Red or Black hat. Each can see all hats in front of them, none behind or their own. Starting from the back, each must say 'Red' or 'Black'. What is the maximum number of prisoners guaranteed to survive?",
+        "options": [
+            {"id": "a", "text": "50 prisoners (50% random chance for each)"},
+            {"id": "b", "text": "99 prisoners guaranteed, 1st prisoner has a 50% survival chance using parity."},
+            {"id": "c", "text": "100 prisoners guaranteed using tone/pitch signaling."},
+            {"id": "d", "text": "Only the front prisoner who can hear all others."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates treat each prisoner's guess as independent, yielding 50%. But prisoners can agree on a parity checksum beforehand (e.g. say 'Red' if count of red hats in front is even).",
+        "playerInsight": "Use a parity bit: 1 bit of shared information in the first announcement solves the state for all remaining 99 prisoners.",
+        "hint": "The first prisoner at the back can communicate odd/even count of Red hats seen ahead."
+    },
+    "puzzle-20-5-pirates-and-100-gold-coins": {
+        "category": "Game Theory & Backward Induction",
+        "difficulty": "boss",
+        "companies": ["Microsoft", "Google", "FAANG"],
+        "questionText": "5 rational pirates (A > B > C > D > E by seniority) divide 100 gold coins. The senior proposes a split; if >= 50% agree, it passes; otherwise the proposer is killed. How should Pirate A divide the coins to maximize his take?",
+        "options": [
+            {"id": "a", "text": "A: 20, B: 20, C: 20, D: 20, E: 20 (Equal split to guarantee consensus)"},
+            {"id": "b", "text": "A: 98, B: 0, C: 1, D: 0, E: 1 (or A: 98, B: 0, C: 0, D: 1, E: 1)"},
+            {"id": "c", "text": "A: 51, B: 49, C: 0, D: 0, E: 0 (Bribe immediate successor)"},
+            {"id": "d", "text": "A: 96, B: 1, C: 1, D: 1, E: 1 (Give everyone 1 coin)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Intuition suggests being generous (e.g. 20 each) to avoid death. But through backward induction, D and E know what they'd get under 2 or 3 pirate subgames, so offering C and E just 1 coin secures their votes!",
+        "playerInsight": "Solve sequential game theory problems from the end (backward induction) rather than the beginning.",
+        "hint": "Analyze what happens if only 2 pirates (D & E) remain, then 3 (C, D, E), then 4, then 5."
+    },
+    "puzzle-set-35-2-eggs-and-100-floors": {
+        "category": "Dynamic Programming & Math",
+        "difficulty": "hard",
+        "companies": ["Google", "Microsoft", "VMWare", "Amazon"],
+        "questionText": "You have a 100-floor building and 2 identical eggs. What is the minimum number of egg drops in the worst case to determine the critical threshold floor where eggs start breaking?",
+        "options": [
+            {"id": "a", "text": "10 drops (drop every 10th floor: 10, 20, 30...)"},
+            {"id": "b", "text": "14 drops (using diminishing step intervals: 14, 27, 39, 50...)"},
+            {"id": "c", "text": "50 drops (binary search splitting 100 in half)"},
+            {"id": "d", "text": "7 drops (log2(100) rounded up)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The common trap is dropping at fixed intervals of 10 floors, which gives up to 10 + 9 = 19 drops worst-case on floor 99. With diminishing step sizes n + (n-1) + ... + 1 >= 100, n = 14 drops worst-case.",
+        "playerInsight": "To balance the worst case across all outcomes, each drop with Egg 1 must reduce remaining drops by 1.",
+        "hint": "Solve n*(n+1)/2 >= 100 to balance the sum of drops across all floor intervals."
+    },
+    "puzzle-21-3-ants-and-triangle": {
+        "category": "Probability",
+        "difficulty": "easy",
+        "companies": ["Intuit", "ZS Associates", "EXL"],
+        "questionText": "3 ants sit at the 3 vertices of an equilateral triangle. Each ant randomly chooses a direction along an edge with 50% probability. What is the probability that at least two ants collide?",
+        "options": [
+            {"id": "a", "text": "1/4 (25%)"},
+            {"id": "b", "text": "3/4 (75% or 6/8)"},
+            {"id": "c", "text": "1/2 (50%)"},
+            {"id": "d", "text": "7/8 (87.5%)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates calculate non-collision probability (2/8 = 1/4 when all go clockwise or all counterclockwise) and mistakenly select 1/4 instead of the complement (1 - 1/4 = 3/4 collision probability)!",
+        "playerInsight": "Always verify whether the question asks for collision OR non-collision probability.",
+        "hint": "There are 2^3 = 8 total movement configurations. Only 2 configurations avoid collision."
+    },
+    "puzzle-18-torch-and-bridge": {
+        "category": "Greedy & Scheduling",
+        "difficulty": "medium",
+        "companies": ["Google", "Microsoft", "FAANG"],
+        "questionText": "4 people (taking 1, 2, 5, and 8 minutes) must cross a fragile bridge at night with 1 torch. At most 2 can cross at once, moving at the slower person's speed. What is the minimum time for all 4 to cross?",
+        "options": [
+            {"id": "a", "text": "19 minutes (Fastest person #1 acts as permanent courier back and forth)"},
+            {"id": "b", "text": "15 minutes (Fast pair crosses, slow pair crosses together, fast person returns)"},
+            {"id": "c", "text": "16 minutes (Pair 1&8, return 1, pair 1&5, return 1, pair 1&2)"},
+            {"id": "d", "text": "14 minutes (Pairs 1&2 and 5&8 cross concurrently)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The intuitive greedy choice is having the fastest runner (1 min) escort everyone back and forth (1+2 + 1+5 + 1+8 = 19 min). Sending the two slowest people (5 and 8) together saves 4 minutes!",
+        "playerInsight": "Bundling the two largest penalties (5 & 8 min) into a single transit eliminates redundant delay.",
+        "hint": "Send 1&2 across (2m), 1 returns (1m), send 5&8 across (8m), 2 returns (2m), send 1&2 across (2m)."
+    },
+    "puzzle-rat-and-poisonous-milk-bottles": {
+        "category": "Binary Search & Encoding",
+        "difficulty": "hard",
+        "companies": ["Google", "Amazon", "Microsoft"],
+        "questionText": "You have 1000 bottles of milk and exactly 1 is poisoned. Poison kills a rat after 24 hours. You have only 24 hours to find the poisoned bottle. What is the minimum number of rats needed?",
+        "options": [
+            {"id": "a", "text": "500 rats (test pairs)"},
+            {"id": "b", "text": "10 rats (binary bitmask encoding 2^10 = 1024)"},
+            {"id": "c", "text": "100 rats (group into sets of 10)"},
+            {"id": "d", "text": "1 rat tested sequentially"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Because you only have 24 hours, you cannot test sequentially. Using 10 rats, label bottles 0 to 999 in binary. Rat i drinks from all bottles where the i-th bit is 1. The dead rats spell out the exact bottle index!",
+        "playerInsight": "Information theory: to identify 1 of N items in a single round of testing, you need ceil(log2(N)) binary sensors.",
+        "hint": "2^10 = 1024 >= 1000. Each rat represents 1 bit in binary representation."
+    },
+    "puzzle-1-how-to-measure-45-minutes-using-two-identical-wires": {
+        "category": "Lateral Thinking",
+        "difficulty": "medium",
+        "companies": ["MakeMyTrip", "Amazon", "Goldman Sachs"],
+        "questionText": "You have two identical non-uniform burning wires. Each wire takes exactly 60 minutes to burn completely from end to end, but burns at irregular speeds. How do you accurately measure 45 minutes?",
+        "options": [
+            {"id": "a", "text": "Measure 3/4 length of Wire 1 and burn it from one end."},
+            {"id": "b", "text": "Light Wire 1 at both ends and Wire 2 at one end. When Wire 1 finishes (30m), light the other end of Wire 2 (15m)."},
+            {"id": "c", "text": "Fold Wire 1 in half twice, then light it."},
+            {"id": "d", "text": "Light both wires simultaneously from one end and stop when 75% remains."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Because the wires burn NON-UNIFORMLY, geometric measurement (3/4 of the length) is invalid. Burning a 60-minute wire from both ends burns it in exactly 30 minutes regardless of speed variations.",
+        "playerInsight": "Rate changes don't affect total time when both ends burn towards each other—the meeting point is always at T/2.",
+        "hint": "Burning a wire from both ends cuts the burn time in half, even if density varies along the wire."
+    },
+    "puzzle-mislabeled-jars": {
+        "category": "Deduction & Logic",
+        "difficulty": "easy",
+        "companies": ["Google", "Microsoft", "Apple"],
+        "questionText": "You have 3 jars labeled 'Apples', 'Oranges', and 'Apples & Oranges'. You are told that ALL 3 JARS ARE MISLABELED. What is the minimum number of fruits you must pick to label all jars correctly?",
+        "options": [
+            {"id": "a", "text": "3 fruits (one from each jar)"},
+            {"id": "b", "text": "1 fruit (picked specifically from the jar labeled 'Apples & Oranges')"},
+            {"id": "c", "text": "2 fruits (one from 'Apples' and one from 'Oranges')"},
+            {"id": "d", "text": "Impossible without seeing inside at least two jars."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "c",
+        "trapExplanation": "Candidates try picking from the single-fruit labeled jars. But picking 1 fruit from the jar labeled 'Apples & Oranges' reveals its true identity completely, which immediately cascades and fixes the remaining two jars by deduction!",
+        "playerInsight": "Exploit the universal false condition: 'All labels are wrong' guarantees the 'Mix' label jar contains 100% pure fruit.",
+        "hint": "Since the 'Apples & Oranges' jar CANNOT be mixed, whatever single fruit you pull out defines the entire jar."
+    },
+    "puzzle-10-coins-puzzle": {
+        "category": "Invariance & Math",
+        "difficulty": "medium",
+        "companies": ["Google", "Yahoo", "Amazon"],
+        "questionText": "You are blindfolded in a dark room with 100 coins on a table. Exactly 10 coins are Heads up, and 90 are Tails up. You cannot tell by touch or sight. How can you split the coins into two piles with the same number of Heads up in each pile?",
+        "options": [
+            {"id": "a", "text": "Keep flipping coins until an auditory pitch difference is detected."},
+            {"id": "b", "text": "Take any 10 coins to form Pile 1, and flip ALL 10 coins in Pile 1 over."},
+            {"id": "c", "text": "Split into two piles of 50 and flip 5 in each pile."},
+            {"id": "d", "text": "It cannot be guaranteed without seeing the coins."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "c",
+        "trapExplanation": "Splitting 50-50 fails because the 10 heads could be distributed as 10-0, 9-1, etc. If you make a pile of 10 coins (with k heads and 10-k tails), flipping all 10 turns the (10-k) tails into heads, exactly matching the (10-k) heads left in the other pile!",
+        "playerInsight": "Algebraic complement: (Total Heads - k) in Pile 2 equals (Pile Size - k) when inverted.",
+        "hint": "If your 10-coin pile has k heads, how many heads are left in the remaining 90-coin pile?"
+    },
+    "puzzle-water-jug-problem": {
+        "category": "State Search & GCD",
+        "difficulty": "easy",
+        "companies": ["Wells Fargo", "Microsoft", "Amazon"],
+        "questionText": "You have a 3-liter jug, a 5-liter jug, and an unlimited water source. The jugs have no markings. What is the minimum number of jug fill/pour/empty operations to measure exactly 4 liters?",
+        "options": [
+            {"id": "a", "text": "8 operations"},
+            {"id": "b", "text": "6 operations (Fill 5L -> Pour into 3L -> Empty 3L -> Pour remaining 2L into 3L -> Fill 5L -> Pour into 3L until full)"},
+            {"id": "c", "text": "4 operations"},
+            {"id": "d", "text": "Impossible because 4 is an even number."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "c",
+        "trapExplanation": "Candidates overlook intermediate transfer and emptying steps. Fill 5L (1), pour into 3L leaving 2L (2), empty 3L (3), transfer 2L to 3L (4), fill 5L (5), top off 3L with 1L leaving exactly 4L in 5L jug (6).",
+        "playerInsight": "Bézout's identity: Any integer linear combination ax + by = gcd(a,b) can be reached.",
+        "hint": "Fill the 5L jug first, then use the 3L jug to measure out 3L, leave 2L, and repeat."
+    },
+    "puzzle-snail-and-wall": {
+        "category": "Boundary Condition",
+        "difficulty": "easy",
+        "companies": ["TCS", "Infosys", "Wipro"],
+        "questionText": "A snail is at the bottom of a 30-foot well. Each day it climbs up 3 feet, but slips down 2 feet during the night. How many days will it take for the snail to climb out of the well?",
+        "options": [
+            {"id": "a", "text": "30 days (net rate is 1 foot per day)"},
+            {"id": "b", "text": "28 days (on the 28th day it reaches 30 feet and climbs out before slipping)"},
+            {"id": "c", "text": "27 days"},
+            {"id": "d", "text": "29 days"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The classic rate trap! Candidates calculate 30 / (3 - 2) = 30 days. But after 27 days and nights, the snail is at 27 feet. On the 28th day, it climbs 3 feet, reaching the top (30 feet) and exits before slipping!",
+        "playerInsight": "Always check boundary exit conditions before applying loop invariants / steady-state rates.",
+        "hint": "Once the snail reaches the top edge during daytime, it climbs out immediately and does not slip."
+    },
+    "puzzle-1000-light-bulbs-switched-on-off-by-1000-persons-passing-by": {
+        "category": "Number Theory",
+        "difficulty": "medium",
+        "companies": ["Amazon", "Google", "Microsoft"],
+        "questionText": "There are 1000 light bulbs numbered 1 to 1000, all initially OFF. 1000 people walk past. Person i toggles every i-th switch (Person 1 toggles all, Person 2 toggles 2,4,6..., Person k toggles multiples of k). How many bulbs remain ON at the end?",
+        "options": [
+            {"id": "a", "text": "500 bulbs (all odd numbered bulbs)"},
+            {"id": "b", "text": "31 bulbs (only perfect squares: 1, 4, 9, 16 ... 961)"},
+            {"id": "c", "text": "1 bulb (only bulb #1)"},
+            {"id": "d", "text": "250 bulbs"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Bulb k is toggled once for every divisor it has. Most numbers have an even number of factors (pairs (d, k/d)), meaning they end up OFF. Only perfect squares have an odd number of factors (since sqrt(k) is paired with itself). floor(sqrt(1000)) = 31!",
+        "playerInsight": "A number has an odd number of divisors if and only if it is a perfect square.",
+        "hint": "Bulb #N is toggled by each of its divisors. What kinds of integers have an odd count of divisors?"
+    },
+    "puzzle-15-camel-and-banana-puzzle": {
+        "category": "Dynamic Optimization",
+        "difficulty": "boss",
+        "companies": ["Amazon", "Yahoo", "Google"],
+        "questionText": "A person has 3000 bananas and a camel. The destination market is 1000 km away. The camel can carry at most 1000 bananas at once and eats 1 banana per km travelled. What is the maximum number of bananas that can be delivered?",
+        "options": [
+            {"id": "a", "text": "0 bananas (the camel eats all 1000 bananas over 1000 km)"},
+            {"id": "b", "text": "533 bananas (transfer checkpoints at 200 km and 533 km)"},
+            {"id": "c", "text": "1000 bananas (travel non-stop with full loads)"},
+            {"id": "d", "text": "333 bananas"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "People naively assume the camel must walk the full 1000 km in one go (eating all 1000 bananas). By shuttling bananas forward to strategic intermediate checkpoints, you minimize the number of trips as the inventory drops!",
+        "playerInsight": "Establish depots where total bananas drop to 2000 (requiring 3 forward + 2 return trips = 5 trips/km) and 1000 (requiring 3 trips/km).",
+        "hint": "Set up intermediate checkpoints to store bananas so you don't travel with partially empty capacity."
+    },
+    "puzzle-50-red-marbles-and-50-blue-marbles": {
+        "category": "Probability Maximization",
+        "difficulty": "hard",
+        "companies": ["Google", "Microsoft", "JP Morgan"],
+        "questionText": "You have 50 red marbles, 50 blue marbles, and 2 identical bowls. You will be blindfolded, a bowl chosen at random, and 1 marble drawn. How should you distribute all 100 marbles to MAXIMIZE the probability of drawing a red marble?",
+        "options": [
+            {"id": "a", "text": "Put 25 Red and 25 Blue in Bowl 1, and 25 Red and 25 Blue in Bowl 2 (50% chance)."},
+            {"id": "b", "text": "Put 1 Red in Bowl 1, and all remaining 49 Red + 50 Blue in Bowl 2 (~74.5% chance)."},
+            {"id": "c", "text": "Put all 50 Red in Bowl 1 and all 50 Blue in Bowl 2 (50% chance)."},
+            {"id": "d", "text": "Put 50 Red + 1 Blue in Bowl 1, 49 Blue in Bowl 2."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "c",
+        "trapExplanation": "Putting all 50 Reds in Bowl 1 gives 0.5 * 1.0 + 0.5 * 0 = 50%. Putting 1 Red alone in Bowl 1 gives 0.5 * 1.0 + 0.5 * (49/99) = 50% + 24.74% = 74.74%!",
+        "playerInsight": "Concentrate guaranteed probability (1.0) into one branch with minimal resources (1 Red marble), leaving the rest to compete in branch two.",
+        "hint": "Can you guarantee that one bowl gives a 100% chance of drawing red with just a single marble?"
+    },
+    "puzzle-8-balls-problem": {
+        "category": "Ternary Search",
+        "difficulty": "easy",
+        "companies": ["Microsoft", "Siemens", "Google"],
+        "questionText": "You have 8 identical-looking balls, but 1 is slightly heavier than the other 7. Using a two-pan balance scale without weights, what is the minimum number of weighings guaranteed to identify the heavier ball?",
+        "options": [
+            {"id": "a", "text": "3 weighings (binary split: 4 vs 4, then 2 vs 2, then 1 vs 1)"},
+            {"id": "b", "text": "2 weighings (split into 3, 3, and 2; ternary comparison)"},
+            {"id": "c", "text": "4 weighings"},
+            {"id": "d", "text": "1 weighing"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Binary search divides into 2 halves, needing 3 steps (ceil(log2(8))). But a balance scale has 3 outcomes (Left heavy, Right heavy, Balanced), enabling base-3 division! ceil(log3(8)) = 2.",
+        "playerInsight": "A two-pan scale provides ternary information (3 outcomes: <, =, >), so split into 3 groups (3, 3, 2).",
+        "hint": "Weigh 3 balls vs 3 balls. If balanced, the heavy ball is in the remaining 2."
+    },
+    "puzzle-17-ratio-of-boys-and-girls-in-a-country-where-people-want-only-boys": {
+        "category": "Expected Value & Probability",
+        "difficulty": "medium",
+        "companies": ["Google", "Goldman Sachs"],
+        "questionText": "In a country where parents keep having children until they have a boy, and then stop immediately, what will be the long-term ratio of boys to girls in the population (assuming 50% birth probability)?",
+        "options": [
+            {"id": "a", "text": "More boys than girls (e.g. 2:1), because every family stops only after having a boy."},
+            {"id": "b", "text": "1:1 ratio (50% boys, 50% girls), independent of stopping rules."},
+            {"id": "c", "text": "More girls than boys (e.g. 1:2), because families with girls keep having more babies."},
+            {"id": "d", "text": "3:1 ratio in favor of boys."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Stopping conditions (stopping when a boy is born) do not change the fundamental probability of each independent birth event (P(Boy) = 0.5 for every birth). By linearity of expectation, the expected ratio remains exactly 1:1.",
+        "playerInsight": "A stopping rule on a sequence of independent Bernoulli trials cannot bias the global expected ratio of outcomes.",
+        "hint": "Every time a baby is born, is there any bias toward boy or girl?"
+    },
+    "puzzle-25chessboard-and-dominos": {
+        "category": "Invariance & Parity",
+        "difficulty": "medium",
+        "companies": ["Google", "Amazon", "Microsoft"],
+        "questionText": "An 8x8 chessboard has two diagonally opposite corner squares removed (leaving 62 squares). Can you cover the remaining board completely using 31 2x1 dominoes?",
+        "options": [
+            {"id": "a", "text": "Yes, because 62 squares is evenly divisible by 2 (31 dominoes)."},
+            {"id": "b", "text": "No, because opposite corners share the same color, leaving 32 squares of one color and 30 of the other."},
+            {"id": "c", "text": "Yes, if dominoes are placed in an alternating spiral pattern."},
+            {"id": "d", "text": "No, only because the board is no longer square."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates look only at area (62 / 2 = 31). But every 2x1 domino MUST cover exactly 1 white and 1 black square. Diagonally opposite corners are the SAME color (e.g. both white), leaving 30 white and 32 black squares. 31 dominoes require 31 white and 31 black, making it impossible!",
+        "playerInsight": "Coloring invariants prove impossibility when area-based arithmetic alone appears satisfiable.",
+        "hint": "What color are two diagonally opposite corner squares on a standard chessboard?"
+    },
+    "puzzle-26-know-average-salary-without-disclosing-individual-salaries": {
+        "category": "Cryptography & Secret Sharing",
+        "difficulty": "medium",
+        "companies": ["Infosys", "Bloomberg", "Goldman Sachs"],
+        "questionText": "3 software engineers (A, B, C) want to find their average salary without any person revealing their individual salary to anyone else. How can they achieve this?",
+        "options": [
+            {"id": "a", "text": "Whisper salaries into an acoustic noise cancellation tube."},
+            {"id": "b", "text": "Person A adds a random number R to their salary, passes the sum to B (who adds theirs), passes to C (who adds theirs), then A subtracts R and divides by 3."},
+            {"id": "c", "text": "Write salaries on pieces of paper folded in a bowl without names."},
+            {"id": "d", "text": "It is mathematically impossible with only 3 participants without a trusted 4th party."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "d",
+        "trapExplanation": "Additive masking (one-time pad concept) lets Person A inject an arbitrary random number R. Since only A knows R, no intermediate sum reveals individual salaries. Subtracting R at the end recovers the exact sum S_A + S_B + S_C!",
+        "playerInsight": "Additive blinding is the foundational building block for secure multi-party computation (MPC).",
+        "hint": "Person A can add a secret large random offset R to their salary before passing it to Person B."
+    },
+    "puzzle-heaven-hell": {
+        "category": "Boolean Logic",
+        "difficulty": "easy",
+        "companies": ["Amazon", "Infosys", "Adobe"],
+        "questionText": "You stand before two doors: one leads to Heaven (Freedom), one to Hell. Two guards stand there: one ALWAYS tells the truth, one ALWAYS lies. You don't know which is which. You may ask ONE guard ONE question. What question reveals the door to Heaven?",
+        "options": [
+            {"id": "a", "text": "'Are you the truth teller?'"},
+            {"id": "b", "text": "'If I were to ask the OTHER guard which door leads to Heaven, which door would he point to?' (Then choose the opposite door)"},
+            {"id": "c", "text": "'Does 1 + 1 = 2?'"},
+            {"id": "d", "text": "'Which door do you personally like best?'"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Asking 'Are you the truth teller?' results in 'Yes' from BOTH guards, conveying zero information. Asking what the other guard would say chains True * False = False and False * True = False, so both guards will ALWAYS point to Hell!",
+        "playerInsight": "Combining two logical gates (NOT and IDENTITY in either order) always yields NOT.",
+        "hint": "Compose a question that forces both the liar and the truth-teller to give the same inverted answer."
+    },
+    "puzzle-14-strategy-for-a-2-player-coin-game": {
+        "category": "Parity & Invariant",
+        "difficulty": "hard",
+        "companies": ["TCS", "Google", "Amazon"],
+        "questionText": "An even number (2N) of coins of varying values are placed in a line. Two players take turns picking one coin from either the far left or far right end. Player 1 can always guarantee winning or tying. What strategy guarantees this?",
+        "options": [
+            {"id": "a", "text": "Greedy strategy: always pick the coin with the higher value on your turn."},
+            {"id": "b", "text": "Sum the odd-positioned coins and even-positioned coins, then choose the set with the greater total sum on every move."},
+            {"id": "c", "text": "Always pick from the right side."},
+            {"id": "d", "text": "Pick the coin adjacent to the smallest available coin."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The greedy trap! Picking the locally highest coin can expose an even larger coin for Player 2. By computing Sum(Odd positions) vs Sum(Even positions), Player 1 can force taking ONLY odd or ONLY even coins throughout the entire game!",
+        "playerInsight": "Player 1 has the power to maintain parity control over every single round.",
+        "hint": "The positions 1, 3, 5... and 2, 4, 6... partition all coins into two independent groups."
+    },
+    "puzzle-cheryls-birthday-puzzle-and-solution": {
+        "category": "Epistemic Logic",
+        "difficulty": "boss",
+        "companies": ["Facebook", "Meta", "Google"],
+        "questionText": "Albert and Bernard are told Cheryl's birthday is one of 10 dates: May 15, May 16, May 19, June 17, June 18, July 14, July 16, Aug 14, Aug 15, Aug 17. Albert knows only the month, Bernard knows only the day. Albert says: 'I know Bernard doesn't know.' Bernard says: 'Now I know.' Albert says: 'Now I also know.' What is Cheryl's birthday?",
+        "options": [
+            {"id": "a", "text": "May 19"},
+            {"id": "b", "text": "July 16"},
+            {"id": "c", "text": "August 17"},
+            {"id": "d", "text": "June 18"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "19 only appears in May and 18 only in June. If Albert knew the month had an 18 or 19, he couldn't be certain Bernard didn't know. Thus May and June are eliminated. Following Bernard's and Albert's subsequent deductions leaves July 16 uniquely!",
+        "playerInsight": "Deductions about what other agents know (higher-order knowledge) systematically collapses the solution space.",
+        "hint": "Albert's first statement eliminates any month that contains a unique day (18 or 19)."
+    },
+    "puzzle-3-cuts-cut-round-cake-8-equal-pieces": {
+        "category": "Spatial Geometry",
+        "difficulty": "easy",
+        "companies": ["Adobe", "Cognizant", "BlackRock"],
+        "questionText": "How can you cut a circular cylindrical cake into 8 equal pieces using exactly 3 straight knife cuts without moving the pieces around?",
+        "options": [
+            {"id": "a", "text": "Make 3 radial cuts from the center (yielding 6 pieces)."},
+            {"id": "b", "text": "Make 2 vertical cuts in a cross (+) to get 4 pieces, then 1 horizontal cut through the middle height to get 8 equal pieces."},
+            {"id": "c", "text": "Make 3 parallel vertical slices."},
+            {"id": "d", "text": "It is mathematically impossible to exceed 7 pieces with 3 plane cuts."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "d",
+        "trapExplanation": "Candidates think in 2D (cutting a circle with 3 lines yields at most 7 regions via the cake numbers formula (n^2+n+2)/2). But a real cake is a 3D cylinder! Adding a horizontal planar cut doubles the 4 pieces into 8.",
+        "playerInsight": "Always verify the dimensional degree of freedom (2D surface vs 3D solid).",
+        "hint": "Think about the height of the cake: can you slice horizontally as well as vertically?"
+    },
+    "puzzle-10-identical-bottles-pills": {
+        "category": "Weighted Sum & Calibration",
+        "difficulty": "medium",
+        "companies": ["ZS Associates", "Google", "Bloomberg"],
+        "questionText": "You have 10 identical bottles of pills. 9 bottles contain standard 10g pills, but 1 bottle contains defective 9g pills. Using a digital scale with exact gram readouts, what is the minimum number of weighings to identify the defective bottle?",
+        "options": [
+            {"id": "a", "text": "4 weighings (binary search)"},
+            {"id": "b", "text": "1 weighing (take 1 pill from bottle 1, 2 from bottle 2 ... 10 from bottle 10)"},
+            {"id": "c", "text": "2 weighings (grouping method)"},
+            {"id": "d", "text": "10 weighings"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Since a digital scale yields quantitative real numbers (not just boolean balance), taking i pills from bottle i gives an expected weight of 550g. If bottle k is defective, the reading will be exactly (550 - k) grams!",
+        "playerInsight": "Linear combination encoding: assigning distinct coefficients (1, 2, ... k) maps the anomaly index directly to the delta.",
+        "hint": "If you take 1 pill from bottle #1, 2 pills from bottle #2, ..., 10 pills from bottle #10, what is the expected total weight?"
+    },
+    "puzzle-blind-man-and-pills": {
+        "category": "Lateral Thinking & Symmetry",
+        "difficulty": "medium",
+        "companies": ["Wipro", "IBM", "Infosys"],
+        "questionText": "A blind man is prescribed 2 pills of type A and 2 pills of type B daily. He has 2 bottles. He accidentally drops 2 pills from Bottle A and 2 pills from Bottle B on the table. The pills are identical in size, shape, and touch. How can he take exactly 1 pill of type A and 1 pill of type B for morning and evening without wasting any?",
+        "options": [
+            {"id": "a", "text": "Throw them all away and open new bottles."},
+            {"id": "b", "text": "Cut each of the 4 pills exactly in half. Put one half of every pill into Group 1 (morning) and the other half into Group 2 (evening)."},
+            {"id": "c", "text": "Dissolve all 4 pills in 1 liter of water and drink half."},
+            {"id": "d", "text": "Smell each pill to identify chemical differences."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "By cutting every pill in half, each of the two piles gets exactly half of every single pill on the table: 2 * (1/2 A) = 1 A, and 2 * (1/2 B) = 1 B!",
+        "playerInsight": "Symmetric partitioning: bisecting each individual element guarantees equal distribution regardless of unknown identities.",
+        "hint": "You don't need to know which pill is A or B if you take exactly half of every single pill."
+    },
+    "puzzle-3-calculate-total-distance-travelled-by-bee": {
+        "category": "Invariant & Relative Motion",
+        "difficulty": "easy",
+        "companies": ["Yahoo", "Amazon", "Microsoft"],
+        "questionText": "Two trains 100 km apart travel towards each other at 50 km/h each. At the same moment, a bee flying at 80 km/h leaves the front of Train A, flies to Train B, turns around, and flies back and forth continuously until the trains collide. What total distance does the bee travel?",
+        "options": [
+            {"id": "a", "text": "Requires computing an infinite geometric series summing back-and-forth legs."},
+            {"id": "b", "text": "80 km (the trains collide in exactly 1 hour, so the bee flies for 1 hour at 80 km/h)"},
+            {"id": "c", "text": "100 km"},
+            {"id": "d", "text": "160 km"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates attempt to sum infinite geometric series for each leg. But time until collision is simply Distance / Relative Speed = 100 / (50 + 50) = 1 hour. Distance = Speed * Time = 80 km/h * 1 h = 80 km!",
+        "playerInsight": "von Neumann famous puzzle: Always look for the overarching invariant parameter (Time) rather than integrating infinite sub-paths.",
+        "hint": "How long does it take for two trains 100 km apart moving at 50 km/h to collide?"
+    },
+    "puzzle-2-find-ages-of-daughters": {
+        "category": "Number Theory & Constraints",
+        "difficulty": "boss",
+        "companies": ["Google", "Microsoft", "Goldman Sachs"],
+        "questionText": "A census taker asks a woman the ages of her 3 daughters. Woman: 'The product of their ages is 72. The sum is my house number.' Census taker: 'I still need more information.' Woman: 'My eldest daughter loves strawberry ice cream.' What are the ages of the 3 daughters?",
+        "options": [
+            {"id": "a", "text": "2, 6, 6"},
+            {"id": "b", "text": "3, 3, 8 (Sum = 14, single eldest daughter of age 8)"},
+            {"id": "c", "text": "1, 8, 9"},
+            {"id": "d", "text": "2, 4, 9"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The house number was known to the census taker. The only sums of 3 factors of 72 that repeat are 2+6+6 = 14 and 3+3+8 = 14. 'Eldest daughter' implies there is a UNIQUE oldest child, eliminating 2,6,6 (twins at 6) and giving 3,3,8!",
+        "playerInsight": "The phrase 'I still need more information' is itself a mathematical constraint proving non-uniqueness of the sum.",
+        "hint": "Find which factor triplets of 72 produce the exact same sum, then look at the eldest child clue."
+    },
+    "puzzle-100-people-in-a-circle-with-gun-puzzle": {
+        "category": "Josephus Problem",
+        "difficulty": "hard",
+        "companies": ["IgniWorld", "Amazon", "Microsoft"],
+        "questionText": "100 people numbered 1 to 100 stand in a circle. Person 1 has a sword/gun, eliminates Person 2, and passes the weapon to Person 3, who eliminates Person 4, continuing cyclically. Which person survives at the very end?",
+        "options": [
+            {"id": "a", "text": "Person 1"},
+            {"id": "b", "text": "Person 73 (Josephus formula: 2 * (100 - 2^6) + 1 = 2 * (100 - 64) + 1 = 73)"},
+            {"id": "c", "text": "Person 50"},
+            {"id": "d", "text": "Person 99"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "For Josephus problem with step 2: write N = 2^k + L (for 100, 2^6 = 64, so L = 36). The winner position is always 2*L + 1 = 2*36 + 1 = 73!",
+        "playerInsight": "Whenever the circle size is reduced to a power of 2, the person currently holding the turn will win.",
+        "hint": "Express 100 as the highest power of 2 plus a remainder: 100 = 64 + 36."
+    },
+    "puzzle-23-days-of-month-using-2-dice": {
+        "category": "Combinatorics & Permutations",
+        "difficulty": "medium",
+        "companies": ["Microsoft", "Google"],
+        "questionText": "You need to display all calendar dates from 01 to 31 using two 6-sided dice cubes. Each face has one digit from 0-9. Can you configure both dice to represent every day of the month?",
+        "options": [
+            {"id": "a", "text": "No, because there are 10 digits (0-9) and 11, 22 need duplicates, which exceeds 12 total faces."},
+            {"id": "b", "text": "Yes, by putting 0, 1, 2 on both dice, and using digit '6' upside down as '9'."},
+            {"id": "c", "text": "Yes, by omitting digit '0' on single-digit dates."},
+            {"id": "d", "text": "No, because dates 01-09 require 0 to be present on at least 3 faces."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "0, 1, 2 must appear on both dice (to make 01-09, 11, 22). That takes 6 faces. The remaining 6 faces across both dice hold {3, 4, 5, 6, 7, 8}. Flipping '6' upside down provides '9'!",
+        "playerInsight": "Rotational symmetry (6 / 9 inversion) provides an extra degree of symbolic freedom.",
+        "hint": "Can face number 6 double as number 9 by simply rotating the cube?"
+    },
+    "puzzle-farmer-goat-wolf-cabbage": {
+        "category": "State Machine & Graph",
+        "difficulty": "easy",
+        "companies": ["Infosys", "TCS", "Accenture"],
+        "questionText": "A farmer needs to transport a wolf, a goat, and a cabbage across a river in a boat that can carry only himself and one item. Wolf eats goat if left alone; goat eats cabbage if left alone. What is the first item the farmer must take across?",
+        "options": [
+            {"id": "a", "text": "The Wolf"},
+            {"id": "b", "text": "The Goat (since wolf does not eat cabbage)"},
+            {"id": "c", "text": "The Cabbage"},
+            {"id": "d", "text": "Any item works equally well"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Taking the wolf leaves the goat with the cabbage (eaten!). Taking cabbage leaves wolf with goat (eaten!). The goat is the mutual conflict node, so it MUST be transported first.",
+        "playerInsight": "Identify the critical bridge vertex in the conflict graph: the goat conflicts with both neighbours.",
+        "hint": "Which two items CAN safely be left alone together on the starting bank?"
+    },
+    "puzzle-22-maximum-chocolates": {
+        "category": "Geometric Series",
+        "difficulty": "easy",
+        "companies": ["Infosys", "MakeMyTrip"],
+        "questionText": "You have Rs 15. 1 chocolate costs Rs 1. You can also exchange 3 chocolate wrappers for 1 free chocolate. What is the maximum number of chocolates you can eat?",
+        "options": [
+            {"id": "a", "text": "20 chocolates"},
+            {"id": "b", "text": "22 chocolates (15 initial -> 15 wrappers = 5 new -> 5 wrappers = 1 new + 2 left -> 3 wrappers = 1 new -> 1 wrapper left)"},
+            {"id": "c", "text": "21 chocolates"},
+            {"id": "d", "text": "23 chocolates"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "c",
+        "trapExplanation": "Buy 15 chocolates (15 wrappers). Exchange 15 for 5 chocolates (5 wrappers). Exchange 3 for 1 chocolate (leaves 2+1 = 3 wrappers). Exchange 3 for 1 chocolate (leaves 1 wrapper). Total eaten: 15 + 5 + 1 + 1 = 22 chocolates!",
+        "playerInsight": "Track leftover tokens across division rounds: r_new = (wrappers % exchange_rate) + new_chocolates.",
+        "hint": "Don't forget to combine leftover wrappers from earlier trades with newly earned wrappers."
+    },
+    "puzzle-37-maximum-run-in-cricket": {
+        "category": "Rule Optimization",
+        "difficulty": "hard",
+        "companies": ["FAANG", "Microsoft", "Amazon"],
+        "questionText": "In a 50-over cricket ODI match without extras/no-balls/wides, what is the maximum number of runs a single batsman can score off the bat?",
+        "options": [
+            {"id": "a", "text": "1800 runs (6 * 6 * 50)"},
+            {"id": "b", "text": "1653 runs (33 runs per over for 49 overs = 5*6 + 3 + last over 6*6 = 36)"},
+            {"id": "c", "text": "1650 runs"},
+            {"id": "d", "text": "1500 runs"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Scoring 6 on all 6 balls in an over causes the strike to rotate on the over change! To retain strike for 49 overs, the batsman must hit 5 sixes (30) and run 3 on the 6th ball (33 runs per over). In over 50, hit sixes on all 6 balls (36). 49 * 33 + 36 = 1653 runs!",
+        "playerInsight": "Strike retention constraint: odd number of runs on the last ball retains strike after the change of ends.",
+        "hint": "To keep the strike for the next over, what is the maximum run on the 6th ball?"
+    },
+    "puzzle-27-hourglasses-puzzle": {
+        "category": "State Measurement",
+        "difficulty": "medium",
+        "companies": ["Bank of America", "Yahoo", "Amazon"],
+        "questionText": "You have two hourglass timers: one for 4 minutes and one for 7 minutes. How can you accurately measure exactly 9 minutes?",
+        "options": [
+            {"id": "a", "text": "Start both together. When 4m runs out, flip it. When 7m runs out, flip 7m again."},
+            {"id": "b", "text": "Start both. At 4m flip 4m. At 7m flip 7m (1m of sand is left on top of 4m). When 4m finishes at 8m, flip 7m again (which has 1m on bottom) to get 8 + 1 = 9m."},
+            {"id": "c", "text": "Flip the 7m timer and estimate 2 minutes remaining."},
+            {"id": "d", "text": "Measure 7m then wait 2m by eye."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Measuring difference: 7 - 4 = 3m. When 4m finishes, flip 4m. When 7m finishes (at 7m), 4m has 1m left. Flip 7m immediately. When 4m runs out (at 8m), 7m has run for 1m. Flipping 7m back measures that exact 1m: 8 + 1 = 9 minutes!",
+        "playerInsight": "Hourglasses allow state freezing: flipping an unfinished timer preserves the elapsed duration.",
+        "hint": "At 7 minutes, how much sand is left in the 4-minute timer if you restarted it at 4 minutes?"
+    },
+    "puzzle-29-car-wheel-puzzle": {
+        "category": "Load Balancing",
+        "difficulty": "easy",
+        "companies": ["MakeMyTrip", "Amazon"],
+        "questionText": "A car has 4 wheels on the car and 1 spare wheel (5 wheels total). Each tire can run for at most 20,000 km before wearing out completely. What is the maximum total distance the car can travel by rotating tires?",
+        "options": [
+            {"id": "a", "text": "20,000 km (limited by the lifetime of individual tires)"},
+            {"id": "b", "text": "25,000 km (total capacity is 5 * 20,000 = 100,000 km; divided across 4 wheels = 25,000 km)"},
+            {"id": "c", "text": "30,000 km"},
+            {"id": "d", "text": "22,500 km"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Candidates assume the car stops when the 4 main tires wear out. But by rotating the spare tire every 5,000 km, all 5 tires share the wear equally: Total tire wear = 5 * 20,000 = 100,000 tire-km. Car travel = 100,000 / 4 = 25,000 km!",
+        "playerInsight": "Amortized load balancing: distributing uniform wear over K+1 resources scales total runtime by (K+1)/K.",
+        "hint": "Calculate the total tire-kilometers across all 5 tires and divide by 4 wheels."
+    },
+    "puzzle-44-girl-or-boy": {
+        "category": "Conditional Probability",
+        "difficulty": "hard",
+        "companies": ["Amazon", "Google", "Goldman Sachs"],
+        "questionText": "A family has 2 children. You are told that AT LEAST ONE of the children is a Boy. What is the probability that BOTH children are Boys (assuming 50% birth gender rate)?",
+        "options": [
+            {"id": "a", "text": "1/2 (50%, because the other child is independent)"},
+            {"id": "b", "text": "1/3 (33.3%, sample space is {BB, BG, GB}, so P(BB) = 1/3)"},
+            {"id": "c", "text": "2/3 (66.7%)"},
+            {"id": "d", "text": "1/4 (25%)"}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "The most famous conditioning trap in probability! The sample space for 2 kids is {BB, BG, GB, GG}. 'At least one is a boy' eliminates GG, leaving 3 equally likely possibilities {BB, BG, GB}. Only 1 has both boys: 1/3!",
+        "playerInsight": "Conditioning on 'at least one' restricts the joint state space without fixing the identity/order of the child.",
+        "hint": "List all 4 birth orders: BB, BG, GB, GG. Which ones have at least one boy?"
+    },
+    "puzzle-can-2-persons-be-with-same-number-of-hairs-on-their-heads": {
+        "category": "Pigeonhole Principle",
+        "difficulty": "easy",
+        "companies": ["OPPO", "Google", "Amazon"],
+        "questionText": "A human head has at most 150,000 strands of hair. In a city with a population of 500,000 people, can you guarantee that at least two people have the exact same number of hairs on their head?",
+        "options": [
+            {"id": "a", "text": "No, because hair count is biologically continuous and unique like fingerprints."},
+            {"id": "b", "text": "Yes, guaranteed by Pigeonhole Principle (500,000 people > 150,001 possible hair counts)."},
+            {"id": "c", "text": "Only if at least two people are bald."},
+            {"id": "d", "text": "No, unless they are identical twins."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Pigeonhole principle: If there are N holes (hair counts from 0 to 150,000 = 150,001 holes) and M pigeons (500,000 people), since M > N, at least ceil(500,000 / 150,001) = 4 people must share the exact same number of hairs!",
+        "playerInsight": "Discrete pigeonhole bounds provide non-constructive mathematical certainty.",
+        "hint": "How many possible hair counts exist (from 0 to 150,000)? Compare that with the population."
+    },
+    "puzzle-elevator-puzzle": {
+        "category": "Lateral Thinking",
+        "difficulty": "easy",
+        "companies": ["FAANG", "Microsoft", "Amazon"],
+        "questionText": "A man lives on the 10th floor of a building. Every day he takes the elevator all the way down to go to work. In the evening, he takes the elevator to the 7th floor and walks the rest of the 3 flights of stairs, EXCEPT on rainy days or when someone else is with him in the elevator. Why?",
+        "options": [
+            {"id": "a", "text": "He enjoys the exercise only on dry days."},
+            {"id": "b", "text": "He is a person of short height who can only reach the button for the 7th floor (on rainy days he uses his umbrella to push button 10)."},
+            {"id": "c", "text": "The elevator motor has a weight limit in the evening."},
+            {"id": "d", "text": "He has a phobia of higher floors after dark."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Lateral thinking classic: Physical reach constraint! He cannot reach button 10 alone. On rainy days he has an umbrella to push button 10, or other passengers push it for him.",
+        "playerInsight": "Look for physical interface limitations that explain situational exceptions.",
+        "hint": "Why would carrying an umbrella or having a taller companion change which elevator button he can press?"
+    },
+    "puzzle-85-chain-link-puzzle": {
+        "category": "Cost Optimization",
+        "difficulty": "medium",
+        "companies": ["Cognizant", "TCS", "Infosys"],
+        "questionText": "You have 5 pieces of chain, each having 3 links (15 links total). It costs Rs 10 to open a link and Rs 15 to weld it back. A jeweler quotes Rs 100 to join all pieces into one continuous loop by opening 4 links (4 * 25 = 100). Can you join them for less?",
+        "options": [
+            {"id": "a", "text": "No, joining 5 separate pieces always requires modifying at least 4 connections (Rs 100)."},
+            {"id": "b", "text": "Yes, for Rs 75 by completely opening all 3 links of ONE entire 3-link piece and using those 3 individual links to connect the remaining 4 pieces."},
+            {"id": "c", "text": "Yes, for Rs 50 by gluing the links."},
+            {"id": "d", "text": "No, because 15 links require 5 operations minimum."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Instead of opening 1 link from each of 4 pieces (4 * (10+15) = Rs 100), take 1 entire 3-link piece and open ALL 3 of its links (3 * 10 = Rs 30). Use those 3 open links to join the remaining 4 chain pieces into a loop and weld them (3 * 15 = Rs 45). Total: Rs 30 + 45 = Rs 75!",
+        "playerInsight": "Sacrificing one entire composite unit provides free connectors to bind the remaining units at lower net cost.",
+        "hint": "What happens if you completely take apart one 3-link chain into 3 separate connector rings?"
+    },
+    "puzzle-four-alternating-knights": {
+        "category": "Graph Permutation & Topology",
+        "difficulty": "hard",
+        "companies": ["Amazon", "Google"],
+        "questionText": "On a 3x3 chessboard, 2 white knights sit at the top corners (a3, c3) and 2 black knights sit at the bottom corners (a1, c1). What is the minimum number of legal knight moves to swap positions (black knights at top, white knights at bottom)?",
+        "options": [
+            {"id": "a", "text": "8 moves"},
+            {"id": "b", "text": "16 moves (knights move along a simple 8-cycle graph without center b2)"},
+            {"id": "c", "text": "12 moves"},
+            {"id": "d", "text": "Impossible because knights cannot jump over each other on a 3x3 board."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "On a 3x3 board, the center square b2 is inaccessible to knight moves. The remaining 8 perimeter squares form a simple topological 8-cycle graph: a3-b1-c3-a2-c1-b3-a1-c2-a3. Knights cannot pass through each other on a cycle, requiring 16 sequential step shifts!",
+        "playerInsight": "Mapping chess piece movements to an isomorphic graph simplifies spatial puzzles into 1D cyclic permutations.",
+        "hint": "Notice that the knight moves on a 3x3 board form an unbranched closed loop of 8 squares."
+    },
+    "puzzle-round-table-coin-game": {
+        "category": "Symmetry & Game Theory",
+        "difficulty": "medium",
+        "companies": ["ElectrifAi", "Microsoft", "Goldman Sachs"],
+        "questionText": "Two players take turns placing identical circular coins flat on a circular table without overlapping or hanging over the edge. The last player who can legally place a coin wins. Player 1 can always guarantee victory. What is the winning strategy?",
+        "options": [
+            {"id": "a", "text": "Place the first coin at the table's edge, then mirror all of Player 2's moves."},
+            {"id": "b", "text": "Place the first coin exactly at the exact CENTER of the table, then mirror Player 2's moves symmetrically through the center."},
+            {"id": "c", "text": "Greedily place coins as close as possible to the previous coin."},
+            {"id": "d", "text": "Player 2 actually has the guaranteed winning strategy."}
+        ],
+        "correctOptionId": "b",
+        "trapOptionId": "a",
+        "trapExplanation": "Point symmetry strategy: Player 1 claims the unique symmetry axis (the exact center). For every subsequent valid move Player 2 makes at coordinate (x, y), the point-symmetric position (-x, -y) is GUARANTEED to be available for Player 1!",
+        "playerInsight": "Symmetry strategy: occupy the singular invariant point first, then mirror the opponent's moves to guarantee an available counter-move.",
+        "hint": "What point on a circle is unique and has no mirror image other than itself?"
+    }
+}
+
+
+def scrape_gfg_puzzles():
+    print(f"Fetching index from {INDEX_URL}...")
+    req = urllib.request.Request(INDEX_URL, headers=HEADERS)
+    scraped_puzzles = []
+    
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8")
+            soup = BeautifulSoup(html, "html.parser")
+            
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                text = a.get_text(strip=True)
+                if any(k in href for k in ["/aptitude/puzzle", "/dsa/puzzle", "/dsa/egg-dropping", "/maths/puzzle", "/gfg-academy/puzzle", "/gfg-academy/interview-puzzle", "/aptitude/four-people-rickety-bridge", "/aptitude/measuring-6l-water-4l-9l-buckets", "/dsa/weight-heavy-ball", "/aptitude/cheryls-birthday-puzzle-and-solution"]):
+                    if text and len(text) > 3 and not text.lower() == "puzzles":
+                        parent = a.find_parent(["tr", "li", "p", "div"])
+                        companies = []
+                        if parent:
+                            sibling_links = parent.find_all("a", href=True)
+                            for sl in sibling_links:
+                                if "/tag/" in sl["href"] or "/interview-experiences/" in sl["href"]:
+                                    c_name = sl.get_text(strip=True)
+                                    if c_name and c_name not in companies:
+                                        companies.append(c_name)
+                        scraped_puzzles.append({
+                            "title": text,
+                            "url": href,
+                            "companies": companies
+                        })
+    except Exception as e:
+        print(f"Warning: Failed to fetch online index ({e}). Using existing metadata.")
+
+    # Deduplicate scraped links
+    unique_scraped = {}
+    for p in scraped_puzzles:
+        slug = p["url"].rstrip("/").split("/")[-1]
+        if slug not in unique_scraped:
+            unique_scraped[slug] = p
+
+    print(f"Found {len(unique_scraped)} unique GFG puzzle links.")
+
+    # Compile the final structured dataset
+    final_questions = []
+    
+    for slug, meta in CURATED_PUZZLE_METADATA.items():
+        if slug in unique_scraped and unique_scraped[slug]["companies"]:
+            merged_companies = list(dict.fromkeys(meta["companies"] + unique_scraped[slug]["companies"]))
+        else:
+            merged_companies = meta["companies"]
+        
+        # Clean title
+        clean_name = re.sub(r'^puzzle-(set-\d+-|\d+-)?', '', slug).replace('-', ' ').title()
+        
+        q_item = {
+            "id": slug,
+            "title": clean_name,
+            "type": "mcq",
+            "category": meta["category"],
+            "difficulty": meta["difficulty"],
+            "company": ", ".join(merged_companies[:3]) if merged_companies else "FAANG & Top Tech",
+            "companies": merged_companies,
+            "questionText": meta["questionText"],
+            "options": meta["options"],
+            "correctOptionId": meta["correctOptionId"],
+            "trapOptionId": meta["trapOptionId"],
+            "trapExplanation": meta["trapExplanation"],
+            "playerInsight": meta["playerInsight"],
+            "hint": meta["hint"]
+        }
+        final_questions.append(q_item)
+
+    print(f"Compiled {len(final_questions)} high-quality Googly Master questions with full traps & solutions.")
+    return final_questions
+
+
+def export_data(questions):
+    os.makedirs("lib/data", exist_ok=True)
+    
+    # Save as JSON
+    json_path = "lib/data/googly_puzzles.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(questions, f, indent=2)
+    print(f"Saved JSON to {json_path}")
+
+    # Generate TypeScript file with true Fisher-Yates randomization and option shuffling
+    ts_path = "lib/data/puzzles.ts"
+    ts_content = f"""// Auto-generated by scripts/scrape_puzzles.py from GeeksforGeeks Top 100 Interview Puzzles
+import type {{ GooglyQuestion, Option }} from '../game4.types';
+
+export const GOOGLY_PUZZLES: GooglyQuestion[] = {json.dumps(questions, indent=2)};
+
+// True Fisher-Yates Array Shuffle
+function shuffleArray<T>(array: T[]): T[] {{
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {{
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }}
+  return arr;
+}}
+
+export function getRandomQuestions(count: number = 3): GooglyQuestion[] {{
+  // Shuffle entire pool for true randomness
+  const shuffledPool = shuffleArray(GOOGLY_PUZZLES);
+  
+  // Pick distinct random questions
+  const selected = shuffledPool.slice(0, Math.min(count, shuffledPool.length));
+
+  // Also randomize options order for each question so answers are dynamically placed
+  return selected.map(q => {{
+    if (!q.options || q.options.length === 0) return q;
+    return {{
+      ...q,
+      options: shuffleArray(q.options)
+    }};
+  }});
+}}
+"""
+    with open(ts_path, "w", encoding="utf-8") as f:
+        f.write(ts_content)
+    print(f"Saved TypeScript file to {ts_path}")
+
+
+if __name__ == "__main__":
+    questions = scrape_gfg_puzzles()
+    export_data(questions)

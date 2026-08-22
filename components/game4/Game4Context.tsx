@@ -1,11 +1,13 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { SessionState, GooglyQuestion, OptionState, RevealResult, LifelineType } from '../../lib/game4.types';
+import { getRandomQuestions, GOOGLY_PUZZLES } from '../../lib/data/puzzles';
 
 interface Game4ContextValue {
   sessionId: string | null;
   sessionState: SessionState;
+  questions: GooglyQuestion[];
   currentQuestion: GooglyQuestion | null;
   currentRound: number;
   totalRounds: number;
@@ -24,7 +26,7 @@ interface Game4ContextValue {
   setOpenAnswer: (text: string) => void;
   setTypewriterDone: (done: boolean) => void;
   useLifeline: (type: LifelineType) => void;
-  submitAnswer: () => void;
+  submitAnswer: () => Promise<void>;
   startGame: () => void;
   advanceToNextQuestion: () => void;
   abandonGame: () => void;
@@ -32,45 +34,12 @@ interface Game4ContextValue {
 
 const Game4Context = createContext<Game4ContextValue | undefined>(undefined);
 
-// The Demo Question Queue (3 Rounds)
-const mockQuestions: GooglyQuestion[] = [
-  {
-    id: 'q1', type: 'mcq', category: 'Databases', difficulty: 'medium',
-    questionText: "If you have a 10TB database and need to migrate it to a new schema with zero downtime, what is the most critical first step?",
-    options: [
-      { id: 'a', text: "Take a full backup and lock the tables." },
-      { id: 'b', text: "Create a dual-write mechanism." },
-      { id: 'c', text: "Setup logical replication to a new instance." },
-      { id: 'd', text: "Write a background script to update rows in batches." } // TRAP
-    ]
-  },
-  {
-    id: 'q2', type: 'mcq', category: 'Architecture', difficulty: 'hard',
-    questionText: "Your microservice is experiencing cascading failures due to downstream timeouts. Which pattern is the most dangerous to implement first?",
-    options: [
-      { id: 'a', text: "Circuit Breaker" },
-      { id: 'b', text: "Automatic Retries with exponential backoff" }, // TRAP
-      { id: 'c', text: "Rate Limiting" },
-      { id: 'd', text: "Bulkhead Pattern" }
-    ]
-  },
-  {
-    id: 'q3', type: 'mcq', category: 'System Design', difficulty: 'boss',
-    questionText: "The Final Googly: You are designing a globally distributed counter. A network partition occurs. Do you prioritize Availability or Consistency, and why does your choice actually guarantee neither?",
-    options: [
-      { id: 'a', text: "Availability, because users need to see a number." },
-      { id: 'b', text: "Consistency, because financial data requires it." },
-      { id: 'c', text: "Neither, CAP theorem forces a tradeoff that degrades both." },
-      { id: 'd', text: "CP systems fall back to AP to preserve uptime." } // TRAP
-    ]
-  }
-];
-
 export function Game4Provider({ children }: { children: React.ReactNode }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>('lobby');
+  const [questions, setQuestions] = useState<GooglyQuestion[]>([]);
   const [currentRound, setCurrentRound] = useState(1);
-  const [googlyRating, setGooglyRating] = useState(50);
+  const [googlyRating, setGooglyRating] = useState(0);
   const [currentQuestion, setCurrentQuestion] = useState<GooglyQuestion | null>(null);
   const [confidenceBet, setConfidenceBet] = useState<1 | 2 | 3 | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
@@ -82,7 +51,41 @@ export function Game4Provider({ children }: { children: React.ReactNode }) {
   const [revealResult, setRevealResult] = useState<RevealResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const totalRounds = mockQuestions.length;
+  const totalRounds = questions.length || 3;
+
+  const loadQuestionForRound = useCallback((round: number, qList: GooglyQuestion[]) => {
+    if (round > qList.length) {
+      setSessionState('game_over');
+      return;
+    }
+
+    const nextQuestion = qList[round - 1];
+    setCurrentQuestion(nextQuestion);
+    setConfidenceBet(null);
+    setSelectedOptionId(null);
+    setOpenAnswer('');
+    setHintText(null);
+    setRevealResult(null);
+    setTypewriterDone(false);
+
+    const initialStates: Record<string, OptionState> = {};
+    nextQuestion?.options?.forEach(opt => {
+      initialStates[opt.id] = 'default';
+    });
+    setOptionStates(initialStates);
+    setSessionState('playing');
+  }, []);
+
+  const startGame = useCallback(() => {
+    const newSessionId = `g4_${Date.now()}`;
+    const newQuestions = getRandomQuestions(3);
+    setSessionId(newSessionId);
+    setGooglyRating(0);
+    setCurrentRound(1);
+    setQuestions(newQuestions);
+    setUsedLifelines({ '50_50': false, 'hint': false });
+    loadQuestionForRound(1, newQuestions);
+  }, [loadQuestionForRound]);
 
   useEffect(() => {
     const saved = sessionStorage.getItem('g4_state');
@@ -92,58 +95,35 @@ export function Game4Provider({ children }: { children: React.ReactNode }) {
         if (parsed.sessionState !== 'lobby' && parsed.sessionState !== 'game_over') {
           setSessionId(parsed.sessionId);
           setSessionState(parsed.sessionState);
+          setQuestions(parsed.questions || []);
           setCurrentRound(parsed.currentRound);
-          setGooglyRating(parsed.googlyRating);
+          setGooglyRating(parsed.googlyRating || 0);
           setCurrentQuestion(parsed.currentQuestion);
           setUsedLifelines(parsed.usedLifelines || { '50_50': false, 'hint': false });
         }
-      } catch (e) { console.error("Failed to parse session", e); }
+      } catch (e) {
+        console.error("Failed to parse session", e);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (sessionId) {
       sessionStorage.setItem('g4_state', JSON.stringify({
-        sessionId, sessionState, currentRound, googlyRating, currentQuestion, usedLifelines
+        sessionId,
+        sessionState,
+        questions,
+        currentRound,
+        googlyRating,
+        currentQuestion,
+        usedLifelines
       }));
     }
-  }, [sessionId, sessionState, currentRound, googlyRating, currentQuestion, usedLifelines]);
-
-  const loadQuestion = (round: number) => {
-    if (round > totalRounds) {
-      setSessionState('game_over');
-      return;
-    }
-
-    const nextQuestion = mockQuestions[round - 1];
-    
-    setCurrentQuestion(nextQuestion);
-    setConfidenceBet(null);
-    setSelectedOptionId(null);
-    setOpenAnswer('');
-    setHintText(null);
-    setRevealResult(null);
-    setTypewriterDone(false);
-    
-    const initialStates: Record<string, OptionState> = {};
-    nextQuestion.options?.forEach(opt => initialStates[opt.id] = 'default');
-    setOptionStates(initialStates);
-    
-    // Always go to playing state, skip the weird boss intro screen
-    setSessionState('playing');
-  };
-
-  const startGame = () => {
-    setSessionId(`g4_${Date.now()}`);
-    setGooglyRating(50);
-    setCurrentRound(1);
-    setUsedLifelines({ '50_50': false, 'hint': false });
-    loadQuestion(1);
-  };
+  }, [sessionId, sessionState, questions, currentRound, googlyRating, currentQuestion, usedLifelines]);
 
   const selectOption = (id: string) => {
     if (sessionState !== 'playing' || !typewriterDone || optionStates[id] === 'eliminated') return;
-    
+
     setSelectedOptionId(id);
     setOptionStates(prev => {
       const next = { ...prev };
@@ -155,51 +135,114 @@ export function Game4Provider({ children }: { children: React.ReactNode }) {
   };
 
   const useLifeline = (type: LifelineType) => {
-    if (usedLifelines[type]) return;
+    if (usedLifelines[type] || !currentQuestion) return;
     setUsedLifelines(prev => ({ ...prev, [type]: true }));
-    
-    if (type === '50_50' && currentQuestion?.options) {
-      setOptionStates(prev => ({ ...prev, 'a': 'eliminated', 'd': 'eliminated' }));
+
+    if (type === '50_50' && currentQuestion.options) {
+      const correctId = currentQuestion.correctOptionId;
+      const trapId = currentQuestion.trapOptionId;
+
+      // Select two wrong options to eliminate
+      const candidates = currentQuestion.options.filter(o => o.id !== correctId && o.id !== trapId);
+      const toEliminate = candidates.length >= 2 
+        ? candidates.slice(0, 2)
+        : currentQuestion.options.filter(o => o.id !== correctId).slice(0, 2);
+
+      setOptionStates(prev => {
+        const next = { ...prev };
+        toEliminate.forEach(opt => {
+          next[opt.id] = 'eliminated';
+        });
+        return next;
+      });
     } else if (type === 'hint') {
-      setHintText("Don't fall for the obvious answer. Think about edge cases under heavy load.");
+      setHintText(currentQuestion.hint || "Think carefully about boundary conditions and subtle trap assumptions.");
     }
   };
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
+    if (!currentQuestion || !selectedOptionId) return;
+
     setIsSubmitting(true);
-    setTimeout(() => {
-      const isTrap = selectedOptionId === 'd' || selectedOptionId === 'b';
-      const isCorrect = selectedOptionId === 'c';
-      const bonus = confidenceBet === 3 && isCorrect ? 50 : 0;
-      const delta = isCorrect ? 15 : (isTrap ? -20 : -5);
-      
-      setRevealResult({
-        correctOptionId: 'c',
-        trapOptionId: selectedOptionId === 'b' ? 'b' : 'd', 
-        isCorrect,
-        isTrap,
-        trapExplanation: isTrap ? "You fell for the Googly! That choice ignores cascading failures." : "Good eye, you avoided the obvious trap.",
-        playerInsight: isCorrect ? "Excellent first-principles reasoning." : "Review distributed systems fallbacks.",
-        ratingDelta: delta,
-        newRating: Math.max(0, Math.min(100, googlyRating + delta)),
-        confidenceBonus: bonus,
-        totalXpAwarded: (isCorrect ? 100 : 10) + bonus
+
+    try {
+      // Call submit API
+      const res = await fetch('/api/game4/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionId: currentQuestion.id,
+          selectedOptionId,
+          confidenceBet: confidenceBet || 1,
+          currentRating: googlyRating,
+          totalQuestions: totalRounds
+        })
       });
-      
-      setGooglyRating(prev => Math.max(0, Math.min(100, prev + delta)));
-      
-      if (currentQuestion?.type === 'mcq') {
+
+      let data: RevealResult;
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        // Fallback calibrated local calculation
+        const isCorrect = selectedOptionId === currentQuestion.correctOptionId;
+        const isTrap = selectedOptionId === currentQuestion.trapOptionId;
+        const multiplier = confidenceBet || 1;
+        
+        const basePerQ = 100 / Math.max(totalRounds, 1);
+        let delta = 0;
+        let confidenceBonus = 0;
+
+        if (isCorrect) {
+          confidenceBonus = multiplier === 3 ? 10 : (multiplier === 2 ? 5 : 0);
+          delta = Math.round(basePerQ + confidenceBonus);
+        } else if (isTrap) {
+          const trapPenalty = multiplier === 3 ? 20 : (multiplier === 2 ? 12 : 6);
+          delta = -trapPenalty;
+        } else {
+          const wrongPenalty = multiplier === 3 ? 10 : (multiplier === 2 ? 6 : 3);
+          delta = -wrongPenalty;
+        }
+
+        const newRating = Math.max(0, Math.min(100, googlyRating + delta));
+
+        data = {
+          correctOptionId: currentQuestion.correctOptionId,
+          trapOptionId: currentQuestion.trapOptionId,
+          isCorrect,
+          isTrap,
+          trapExplanation: isTrap
+            ? currentQuestion.trapExplanation || "You fell for the Googly! That was the intuitive trap."
+            : (isCorrect ? "Masterfully solved! You avoided the deceptive trap." : "Incorrect. Review the deduction steps."),
+          playerInsight: currentQuestion.playerInsight || "Apply first principles to interview puzzles.",
+          ratingDelta: delta,
+          newRating,
+          confidenceBonus,
+          totalXpAwarded: (isCorrect ? 100 * multiplier : 15) + (confidenceBonus * 5)
+        };
+      }
+
+      setRevealResult(data);
+      setGooglyRating(data.newRating);
+
+      if (currentQuestion.type === 'mcq' && currentQuestion.options) {
         setOptionStates(prev => {
-          const res = { ...prev };
-          res['c'] = 'correct';
-          if (isTrap && selectedOptionId) res[selectedOptionId] = 'trap';
-          return res;
+          const resMap = { ...prev };
+          if (data.correctOptionId) {
+            resMap[data.correctOptionId] = 'correct';
+          }
+          if (data.isTrap && selectedOptionId) {
+            resMap[selectedOptionId] = 'trap';
+          }
+          return resMap;
         });
       }
-      
-      setIsSubmitting(false);
+
       setSessionState('revealing');
-    }, 1500);
+    } catch (e) {
+      console.error('Submission error:', e);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const advanceToNextQuestion = () => {
@@ -207,8 +250,9 @@ export function Game4Provider({ children }: { children: React.ReactNode }) {
       setSessionState('game_over');
       sessionStorage.removeItem('g4_state');
     } else {
-      setCurrentRound(prev => prev + 1);
-      loadQuestion(currentRound + 1);
+      const nextRound = currentRound + 1;
+      setCurrentRound(nextRound);
+      loadQuestionForRound(nextRound, questions);
     }
   };
 
@@ -218,7 +262,7 @@ export function Game4Provider({ children }: { children: React.ReactNode }) {
 
   return (
     <Game4Context.Provider value={{
-      sessionId, sessionState, currentQuestion, currentRound, totalRounds, googlyRating,
+      sessionId, sessionState, questions, currentQuestion, currentRound, totalRounds, googlyRating,
       confidenceBet, selectedOptionId, openAnswer, optionStates, typewriterDone,
       hintText, usedLifelines, revealResult, isSubmitting,
       setConfidenceBet, selectOption, setOpenAnswer, setTypewriterDone,
