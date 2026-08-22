@@ -10,6 +10,8 @@ import {
   Loader2,
   FileText,
   Upload,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 
 import { useTheme } from '@/app/theme-provider'
@@ -290,15 +292,28 @@ function extractResumeSkills(resumeText: string): string[] {
     .map((group) => group.label)
 }
 
-function predictSalaryFromResume(resumeText: string, role: string): number {
-  const combined = `${resumeText} ${role}`.toLowerCase()
-  const seniorSignals = ['senior', 'lead', 'principal', 'architect', 'manager', 'staff']
-  const premiumSkills = ['ai', 'ml', 'machine learning', 'react', 'next.js', 'node', 'cloud', 'aws', 'kubernetes', 'system design', 'data', 'typescript', 'sql']
-
-  const seniorBonus = seniorSignals.some((skill) => combined.includes(skill)) ? 900000 : 0
-  const skillBonus = premiumSkills.reduce((total, skill) => total + (combined.includes(skill) ? 180000 : 0), 0)
-
-  return Math.min(6000000, Math.max(300000, 650000 + seniorBonus + skillBonus))
+async function fetchPredictedSalary(
+  company: string,
+  role: string,
+  currentOffer: number
+): Promise<{ predicted: number; confidence: string; reasoning: string }> {
+  try {
+    const res = await fetch('http://localhost:5000/api/game2/predict-salary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company, role, currentOffer }),
+    })
+    if (!res.ok) throw new Error('predict-salary failed')
+    const data = await res.json()
+    return {
+      predicted: data.predicted_salary ?? 0,
+      confidence: data.confidence ?? 'low',
+      reasoning: data.reasoning ?? '',
+    }
+  } catch (e) {
+    console.error('Salary prediction error:', e)
+    return { predicted: 0, confidence: 'low', reasoning: 'API call failed' }
+  }
 }
 
 export default function Game2Page() {
@@ -315,6 +330,8 @@ export default function Game2Page() {
   const [resumeText, setResumeText] = useState<string>('')
   const [resumeUploadError, setResumeUploadError] = useState<string>('')
   const [predictedSalary, setPredictedSalary] = useState<number>(0)
+  const [salaryPredictionLoading, setSalaryPredictionLoading] = useState<boolean>(false)
+  const [salaryConfidence, setSalaryConfidence] = useState<string>('')
   const [sessionId, setSessionId] = useState<string>('')
   const [companyRange, setCompanyRange] = useState<{ min: number; max: number }>({ min: 0, max: 0 })
   const [fundingStatus, setFundingStatus] = useState<string>('')
@@ -322,6 +339,8 @@ export default function Game2Page() {
   const [marketAverage, setMarketAverage] = useState<number>(0)
   const [baseSalary, setBaseSalary] = useState<number>(0)
   const [salaryRecommendation, setSalaryRecommendation] = useState<any | null>(null)
+  const [currentHrAudioUrl, setCurrentHrAudioUrl] = useState<string | null>(null)
+  const [isPlayingHrVoice, setIsPlayingHrVoice] = useState<boolean>(false)
   const [coachReport, setCoachReport] = useState<string | null>(null)
   const [coachLoading, setCoachLoading] = useState<boolean>(false)
   const [entryLoading, setEntryLoading] = useState<boolean>(false)
@@ -375,9 +394,15 @@ export default function Game2Page() {
   const resumeSkills = useMemo(() => extractResumeSkills(resumeText), [resumeText])
 
   useEffect(() => {
-    if (!resumeText.trim()) return
-    setPredictedSalary(predictSalaryFromResume(resumeText, role))
-  }, [resumeText, role])
+    if (!resumeText.trim() || !companyName.trim() || !role.trim()) return
+    const offerNum = Number(currentOffer) * (salaryUnit === 'crore' ? 10000000 : salaryUnit === 'lakh' ? 100000 : 1000)
+    setSalaryPredictionLoading(true)
+    fetchPredictedSalary(companyName.trim(), role.trim(), offerNum).then((result) => {
+      setPredictedSalary(result.predicted)
+      setSalaryConfidence(result.confidence)
+      setSalaryPredictionLoading(false)
+    })
+  }, [resumeText, role, companyName, currentOffer, salaryUnit])
 
   useEffect(() => {
     if (!entryLoading || phase !== 'gameplay') return
@@ -448,7 +473,7 @@ export default function Game2Page() {
         
         const realAiText = `${data.profile.resume_summary} Skills: ${data.profile.skills.join(', ')}`
         setResumeText(realAiText)
-        setPredictedSalary(predictSalaryFromResume(realAiText, role))
+        // Salary prediction will be triggered by the useEffect watching resumeText+role+companyName
       } else {
         throw new Error(data.message || 'Parsing failed')
       }
@@ -566,6 +591,24 @@ export default function Game2Page() {
         setFinalSalary(data.hrCounterOffer)
         setHrCardFlipped(true)
         playSound('card')
+
+        // Play HR TTS audio if available
+        if (data.hrAudio) {
+          try {
+            const audioBlob = new Blob(
+              [Uint8Array.from(atob(data.hrAudio), c => c.charCodeAt(0))],
+              { type: 'audio/wav' }
+            )
+            const audioUrl = URL.createObjectURL(audioBlob)
+            setCurrentHrAudioUrl(audioUrl)
+            const audio = new Audio(audioUrl)
+            setIsPlayingHrVoice(true)
+            audio.play().catch(() => { setIsPlayingHrVoice(false) })
+            audio.onended = () => { setIsPlayingHrVoice(false) }
+          } catch (e) {
+            console.error('Failed to play HR TTS audio:', e)
+          }
+        }
 
         if (data.isPaused) {
           setWarningMessage(data.feedback || 'The round has been paused. Retry with a stronger move.')
@@ -791,7 +834,9 @@ export default function Game2Page() {
                     : createElement('span', { className: 'text-xs', style: { color: colors.muted } }, 'No strong skill matches found yet.')
                 ),
                 createElement('p', { className: 'mt-3 text-[11px] font-medium', style: { color: colors.muted } },
-                  `Predicted salary: ${predictedSalary > 0 ? `${formatRupeeWords(predictedSalary)} / year` : 'Upload a resume to calculate.'}`
+                  salaryPredictionLoading
+                    ? 'Searching real salary data...'
+                    : `Predicted salary: ${predictedSalary > 0 ? `${formatRupeeWords(predictedSalary)} / year${salaryConfidence ? ` (${salaryConfidence} confidence)` : ''}` : 'Upload a resume to calculate.'}`
                 )
               )
             )
@@ -903,7 +948,25 @@ export default function Game2Page() {
               )
             ),
             createElement('div', { className: 'space-y-2' },
-              createElement('p', { className: 'text-xs font-bold uppercase tracking-wider text-orange-500' }, 'HR Manager Response'),
+              createElement('div', { className: 'flex items-center justify-between' },
+                createElement('p', { className: 'text-xs font-bold uppercase tracking-wider text-orange-500' }, 'HR Manager Response'),
+                currentHrAudioUrl && createElement('button', {
+                  type: 'button',
+                  onClick: () => {
+                    if (currentHrAudioUrl) {
+                      const audio = new Audio(currentHrAudioUrl)
+                      setIsPlayingHrVoice(true)
+                      audio.play().catch(() => { setIsPlayingHrVoice(false) })
+                      audio.onended = () => { setIsPlayingHrVoice(false) }
+                    }
+                  },
+                  className: 'flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors',
+                  title: 'Listen to HR voice'
+                },
+                  createElement(Volume2, { size: 13, className: isPlayingHrVoice ? 'animate-pulse text-orange-300' : '' }),
+                  isPlayingHrVoice ? 'Speaking...' : 'Play Voice'
+                )
+              ),
               createElement('p', { className: 'text-sm leading-relaxed italic', style: { color: colors.text } },
                 isRoundCompleted
                   ? history[history.length - 1].hrResponse

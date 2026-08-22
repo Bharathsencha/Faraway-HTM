@@ -10,3 +10,7 @@ def init_game():
 @game2_bp.route('/move', methods=['POST'])
 def make_move():
     return game2_controller.process_move(request.get_json())
+
+@game2_bp.route('/predict-salary', methods=['POST'])
+def predict_salary():
+    return game2_controller.predict_salary(request.get_json())

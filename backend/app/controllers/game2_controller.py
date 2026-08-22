@@ -42,3 +42,44 @@ def process_move(data):
         return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def predict_salary(data):
+    """
+    Uses Tavily + Groq to predict realistic market salary
+    for a given company + role combination.
+    """
+    company = data.get('company', '').strip()
+    role = data.get('role', '').strip()
+    current_offer = float(data.get('currentOffer', 0) or 0)
+
+    if not company or not role:
+        return jsonify({"error": "company and role are required"}), 400
+
+    try:
+        result = game2_service._fetch_tavily_salary_data(company, role)
+
+        if result:
+            return jsonify({
+                "predicted_salary": result["avg"],
+                "min_salary": result["min"],
+                "max_salary": result["max"],
+                "confidence": result.get("confidence", "low"),
+                "sources": result.get("sources", []),
+                "reasoning": result.get("reasoning", ""),
+                "source": "tavily",
+            }), 200
+        else:
+            # Fallback: conservative estimate based on the offer itself
+            fallback = int(current_offer * 1.05) if current_offer > 0 else 400000
+            return jsonify({
+                "predicted_salary": fallback,
+                "min_salary": int(fallback * 0.85),
+                "max_salary": int(fallback * 1.20),
+                "confidence": "low",
+                "sources": [],
+                "reasoning": "Tavily search returned no results; using conservative estimate.",
+                "source": "fallback",
+            }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

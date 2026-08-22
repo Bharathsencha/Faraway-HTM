@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 from groq import Groq
 
 # Full pool of MCQ and Open questions by difficulty
@@ -245,6 +246,8 @@ def evaluate_with_agent(question_id, selected_option, open_answer, confidence_be
         )
 
         raw_text = completion.choices[0].message.content.strip()
+        # Strip Qwen's <think>...</think> reasoning blocks
+        raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
         if raw_text.startswith("```"):
             raw_text = raw_text.split("```")[1]
             if raw_text.startswith("json"):

@@ -326,6 +326,8 @@ Return ONLY valid JSON, no extra text, no markdown:
         stream=False
     )
     text = completion.choices[0].message.content.strip()
+    # Strip Qwen's <think>...</think> reasoning blocks
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     # --- GROQ REPLACEMENT ENDS HERE ---
     
     # Groq returns pure JSON when response_format is set, so we can parse directly
