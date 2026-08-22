@@ -2,6 +2,7 @@ import os
 import json
 from pathlib import Path
 
+from datetime import timedelta
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -39,6 +40,7 @@ def create_app() -> Flask:
 
     app.config["SECRET_KEY"] = secret_key
     app.config["JWT_SECRET_KEY"] = jwt_secret_key
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=30)
     app.config["JSON_SORT_KEYS"] = False
 
     CORS(app, resources={r"/api/*": {"origins": [origin.strip() for origin in cors_origins.split(",") if origin.strip()]}})
