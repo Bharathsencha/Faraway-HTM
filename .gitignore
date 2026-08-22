@@ -8,9 +8,55 @@ __v0_jsx-dev-runtime.ts
 
 # Environment variables
 .env*.local
+**/.env
+**/.env.*
+.csv
 
 # Common ignores
 node_modules
 .next/
+out/
+dist/
+build/
 tsconfig.tsbuildinfo
 .DS_Store
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+.pytest_cache/
+.coverage/
+htmlcov/
+*.db
+
+# Build & Cache
+.turbo/
+frontend/.turbo/
+.swp
+.swo
+*.swp
+*.swo
+
+# IDE & Editor
+.idea/
+.vscode/settings.json
+.vscode/launch.json
+*.code-workspace
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Local data
+backend/data/*.json
+backend/data/*.csv
