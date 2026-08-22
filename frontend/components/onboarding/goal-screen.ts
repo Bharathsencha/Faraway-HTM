@@ -1,6 +1,6 @@
 'use client'
 
-import { createElement, useState } from 'react'
+import { createElement, useState, useEffect } from 'react'
 import { ChevronRight } from 'lucide-react'
 
 interface GoalScreenProps {
@@ -42,6 +42,48 @@ function PaperPin() {
 
 export function GoalScreen({ theme, onNext, onSkip }: GoalScreenProps) {
   const [goal, setGoal] = useState<string>('')
+  const [placeholderText, setPlaceholderText] = useState('')
+
+  useEffect(() => {
+    const examples = [
+      "Software Engineer at Google...",
+      "Product Manager at Stripe...",
+      "UX Designer at Airbnb...",
+      "Data Scientist at OpenAI..."
+    ]
+    let currentExample = 0
+    let currentChar = 0
+    let isDeleting = false
+    let timer: NodeJS.Timeout
+
+    const type = () => {
+      const fullText = examples[currentExample]
+      
+      if (isDeleting) {
+        setPlaceholderText(fullText.substring(0, currentChar - 1))
+        currentChar--
+      } else {
+        setPlaceholderText(fullText.substring(0, currentChar + 1))
+        currentChar++
+      }
+
+      let typeSpeed = isDeleting ? 25 : 60
+
+      if (!isDeleting && currentChar === fullText.length) {
+        typeSpeed = 2000
+        isDeleting = true
+      } else if (isDeleting && currentChar === 0) {
+        isDeleting = false
+        currentExample = (currentExample + 1) % examples.length
+        typeSpeed = 400
+      }
+
+      timer = setTimeout(type, typeSpeed)
+    }
+
+    timer = setTimeout(type, 500)
+    return () => clearTimeout(timer)
+  }, [])
 
   const textColor = theme === 'dark' ? '#f5f0e8' : '#241710'
   const subTextColor = theme === 'dark' ? '#d3c8bc' : '#6e6257'
@@ -81,7 +123,45 @@ export function GoalScreen({ theme, onNext, onSkip }: GoalScreenProps) {
           createElement('div', { className: 'absolute left-4 top-[-18px] drop-shadow-[0_10px_12px_rgba(0,0,0,0.18)]' }, createElement(PaperPin, null)),
           createElement('div', { className: 'rounded-[1.5rem] border border-dashed px-4 py-4', style: { borderColor: theme === 'dark' ? 'rgba(64, 46, 35, 0.26)' : 'rgba(150, 111, 81, 0.22)' } },
             createElement('label', { className: 'mb-2 block text-xs font-semibold uppercase tracking-[0.28em]', style: { color: paperLabelColor } }, 'Your target'),
-            createElement('textarea', { value: goal, onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => { setGoal(e.target.value) }, placeholder: 'Type your target role & company', className: 'relative z-10 min-h-52 w-full resize-none border-0 bg-transparent text-[1.05rem] leading-7 outline-none placeholder:opacity-55', style: { color: paperTextColor, caretColor: accent, fontFamily: 'var(--font-sans)' } })
+            createElement('style', null, `
+              @keyframes popInChar {
+                0% { opacity: 0; transform: scale(0.6) translateY(2px); }
+                60% { transform: scale(1.15); }
+                100% { opacity: 1; transform: scale(1) translateY(0); }
+              }
+              .char-animate {
+                display: inline-block;
+                animation: popInChar 0.12s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+              }
+              .overlay-container {
+                position: relative;
+                width: 100%;
+                min-height: 13rem;
+              }
+              .hide-text-input {
+                color: transparent !important;
+              }
+              .hide-text-input::selection {
+                color: ${paperTextColor} !important;
+                background-color: rgba(255, 106, 42, 0.25) !important;
+              }
+            `),
+            createElement('div', { className: 'overlay-container' },
+              createElement('div', { 
+                className: 'absolute inset-0 pointer-events-none text-[1.05rem] leading-7 p-0 m-0', 
+                style: { color: paperTextColor, fontFamily: 'var(--font-sans)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } 
+              },
+                goal ? goal.split('').map((char, i) => 
+                  (char === ' ' || char === '\\n') ? char : createElement('span', { key: i, className: 'char-animate' }, char)
+                ) : createElement('span', { className: 'opacity-55' }, placeholderText)
+              ),
+              createElement('textarea', { 
+                value: goal, 
+                onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => { setGoal(e.target.value) }, 
+                className: 'hide-text-input absolute inset-0 z-10 w-full h-full resize-none border-0 bg-transparent text-[1.05rem] leading-7 outline-none p-0 m-0', 
+                style: { caretColor: accent, fontFamily: 'var(--font-sans)' } 
+              })
+            )
           ),
           createElement('div', { className: 'mt-4 flex items-center justify-between rounded-[1.2rem] px-3 py-2', style: { backgroundColor: theme === 'dark' ? 'rgba(39, 29, 22, 0.45)' : 'rgba(255, 255, 255, 0.55)' } },
             createElement('div', null,
